@@ -41,48 +41,49 @@ namespace BrusDev.IO.Modems
             this.connectionSyncRoot = new object();
         }
 
-        public void protocol_FrameReceived(object sender, EventArgs e)
+        private void protocol_FrameReceived(object sender, ATModemFrameEventArgs e)
         {
-            ATFrame responseFrame = null;
-            int framesToReceive = this.protocol.FramesToReceive;
+            ATFrame responseFrame = e.Frame;
 
-            for (int frameIndex = 0; frameIndex < framesToReceive; frameIndex++)
+            if (responseFrame.Command == ATCommand.CONNECT)
             {
-                responseFrame = this.protocol.Receive();
-
-                if (responseFrame.Command == ATCommand.CONNECT)
-                {
-                    this.connectionEvent.Set();
-                }
-                else if (responseFrame.Command == ATCommand.CDNSGIP)
-                {
-                    this.dnsQueryParameters = responseFrame.OutParameters;
-                    this.dnsQueryEvent.Set();
-                }
-                else if (responseFrame.Command == ATCommand.SEND)
-                {
-                    this.sendResult = responseFrame.Result;
-                    this.sendEvent.Set();
-                }
-                else if (responseFrame.Command == ATCommand.IPD)
+                this.connectionEvent.Set();
+            }
+            else if (responseFrame.Command == ATCommand.CDNSGIP)
+            {
+                this.dnsQueryParameters = responseFrame.OutParameters;
+                this.dnsQueryEvent.Set();
+            }
+            else if (responseFrame.Command == ATCommand.SEND)
+            {
+                this.sendResult = responseFrame.Result;
+                this.sendEvent.Set();
+            }
+            else if (responseFrame.Command == ATCommand.IPD)
+            {
+                if (responseFrame.DataSuccess)
                 {
                     this.AddReceivedData(responseFrame.Data);
                 }
-                else if (responseFrame.Command == ATCommand.CLOSED)
+                else
                 {
-                    lock (connectionSyncRoot)
-                    {
-                        this.OnClientDisconnected(EventArgs.Empty);
-                    }
+                    this.DisconnectIPClient();
                 }
-                else if (responseFrame.Command == ATCommand.NORMAL_POWER_DOWN)
+            }
+            else if (responseFrame.Command == ATCommand.CLOSED)
+            {
+                lock (connectionSyncRoot)
                 {
-                    this.Initialize();
+                    this.OnClientDisconnected(EventArgs.Empty);
                 }
-                else if (responseFrame.Command == ATCommand.SEND_PROMPT)
-                {
-                    this.sendPromptEvent.Set();
-                }
+            }
+            else if (responseFrame.Command == ATCommand.NORMAL_POWER_DOWN)
+            {
+                this.Initialize();
+            }
+            else if (responseFrame.Command == ATCommand.SEND_PROMPT)
+            {
+                this.sendPromptEvent.Set();
             }
         }
 
@@ -165,7 +166,7 @@ namespace BrusDev.IO.Modems
                 throw new ATModemException(ATModemError.Generic);
         }
 
-        public void SetAPNSettings(string apn, string username, string password)
+        private void SetAPNSettings(string apn, string username, string password)
         {
             ATFrame responseFrame;
             ATFrame requestFrame = ATFrame.Instance;

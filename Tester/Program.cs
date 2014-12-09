@@ -15,6 +15,7 @@ namespace Tester
         {
             ATModem modem;
             int receivedBytes;
+            byte[] sendingBuffer;
             byte[] receivingBuffer;
             string remoteIPAddress;
             StringBuilder receivedStringBuilder;
@@ -25,7 +26,7 @@ namespace Tester
 
             modem = new SIM900ATModem();
             modem.Open("COM1", 19200, System.IO.Ports.Parity.None, 8, System.IO.Ports.StopBits.One, System.IO.Ports.Handshake.None);
-            modem.AccessPointName = "internet.wind";
+            modem.AccessPointName = "web.omnitel.it";
             modem.ClientConnected += modem_ClientConnected;
             modem.ClientDisconnected += modem_ClientDisconnected;
             modem.DataReceived += modem_DataReceived;
@@ -33,11 +34,13 @@ namespace Tester
 
             modem.OpenDataConnection();
 
-            remoteIPAddress = modem.QueryDNSIPAddress("www.microsoft.it");
+            remoteIPAddress = modem.QueryDNSIPAddress("punto-informatico.it");
 
             modem.ConnectIPClient("TCP", remoteIPAddress, 80);
 
-            modem.SendData(new byte[] { (byte)'1', (byte)'2', (byte)'3', (byte)'\r', (byte)'\n', (byte)'\r', (byte)'\n' }, 0, 7);
+
+            sendingBuffer = Encoding.UTF8.GetBytes("GET / HTTP/1.1\r\nHost: punto-informatico.it\r\n\r\n");
+            modem.SendData(sendingBuffer, 0, sendingBuffer.Length);
 
             while ((receivedBytes = modem.ReceiveData(receivingBuffer, 0, receivingBuffer.Length)) > 0)
             {

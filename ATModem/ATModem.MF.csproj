@@ -38,6 +38,8 @@
     <Compile Include="ATModemException.cs" />
     <Compile Include="ATProtocol.cs" />
     <Compile Include="ATModemDataEventHandler.cs" />
+    <Compile Include="ATModemFrameEventArgs.cs" />
+    <Compile Include="ATModemFrameEventHandler.cs" />
     <Compile Include="Frames\ATCommand.cs" />
     <Compile Include="Frames\ATCommandType.cs" />
     <Compile Include="Frames\ATFrame.cs" />

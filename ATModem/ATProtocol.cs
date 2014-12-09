@@ -27,9 +27,6 @@ namespace BrusDev.IO.Modems
 
         private SerialPort serialPort;
 
-        private Queue framesQueue;
-        private AutoResetEvent framesQueueIsReady;
-
         private int dataIndex;
         private int dataCount;
         private int dataLength;
@@ -56,10 +53,7 @@ namespace BrusDev.IO.Modems
         private AutoResetEvent waitingResponseEvent;
 
 
-        public event ATModemEventHandler FrameReceived;
-
-
-        public int FramesToReceive { get { lock (this.framesQueue) { return this.framesQueue.Count; } } }
+        public event ATModemFrameEventHandler FrameReceived;
 
 
         public ATProtocol(ATParser parser)
@@ -77,9 +71,6 @@ namespace BrusDev.IO.Modems
 
             this.waitingResponseLock = new object();
             this.waitingResponseEvent = new AutoResetEvent(false);
-
-            this.framesQueue = new Queue();
-            this.framesQueueIsReady = new AutoResetEvent(false);
 
             this.readDataLength = 0;
             this.dataSyncRoot = new object();
@@ -121,33 +112,6 @@ namespace BrusDev.IO.Modems
 
             Debug.Print("WriteData data > ");
             Debug.Print(new string(ATParser.Bytes2Chars(buffer, index, count)));
-        }
-
-        public ATFrame Receive()
-        {
-            return this.Receive(Timeout.Infinite);
-        }
-
-        public ATFrame Receive(int timeout)
-        {
-            ATFrame frame = null;
-
-
-            if (!this.framesQueueIsReady.WaitOne(timeout, true))
-                throw new ATModemException(ATModemError.Timeout);
-
-
-            lock (this.framesQueue)
-            {
-                frame = (ATFrame)this.framesQueue.Dequeue();
-
-                if (this.framesQueue.Count == 0)
-                    this.framesQueueIsReady.Reset();
-                else
-                    this.framesQueueIsReady.Set();
-            }
-
-            return frame;
         }
 
         public void Send(ATFrame frame)
@@ -289,15 +253,8 @@ namespace BrusDev.IO.Modems
                                             this.ReadData();
 
                                             //Notifico la ricezione della risposta non attesa.
-                                            lock (this.framesQueue)
-                                            {
-                                                this.framesQueue.Enqueue(parserResult.Frame);
-
-                                                this.framesQueueIsReady.Set();
-
-                                                if (this.FrameReceived != null)
-                                                    this.FrameReceived(this, EventArgs.Empty);
-                                            }
+                                            if (this.FrameReceived != null)
+                                                this.FrameReceived(this, new ATModemFrameEventArgs(this.parserResult.Frame));
                                         }
                                         else
                                         {
@@ -362,6 +319,7 @@ namespace BrusDev.IO.Modems
                 this.readDataLength = this.receivingBufferIndex + this.receivingBufferCount - this.dataIndex;
 
                 this.parserResult.Frame.Data = new byte[this.dataLength];
+                this.parserResult.Frame.DataSuccess = true;
 
 
                 if (this.readDataLength > 0)

@@ -26,7 +26,7 @@ namespace BrusDev.IO.Modems.Parsers
 
             if (responseMatch.Success)
             {
-                ATFrame responseFrame = this.Unsolicited ? new ATFrame() : ATFrame.Instance;
+                ATFrame responseFrame = ATFrame.Instance;
 
 
                 parserResult = ATParserResult.Instance;
