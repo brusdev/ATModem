@@ -14,6 +14,7 @@ namespace BrusDev.IO.Modems
 {
     public class ATProtocol
     {
+        private const int defaultDataTimeout = 3000;
         private const int defaultProcessTimeout = 60000;
         private const int receivingBufferSize = 128;
         private const int sendingBufferSize = 128;
@@ -30,8 +31,11 @@ namespace BrusDev.IO.Modems
         private int dataIndex;
         private int dataCount;
         private int dataLength;
+        private int dataTicks;
+        private int frameIndex;
         private int readDataLength;
         private object dataSyncRoot;
+        private ATFrameData frameData;
         private ManualResetEvent dataReadEvent;
         private ManualResetEvent dataReadyEvent;
 
@@ -54,6 +58,7 @@ namespace BrusDev.IO.Modems
 
 
         public event ATModemFrameEventHandler FrameReceived;
+        public event ATModemFrameDataEventHandler FrameDataReceived;
 
 
         public ATProtocol(ATParser parser)
@@ -110,8 +115,10 @@ namespace BrusDev.IO.Modems
         {
             this.serialPort.Write(buffer, index, count);
 
+#if (DEBUG)
             Debug.Print("WriteData data > ");
             Debug.Print(new string(ATParser.Bytes2Chars(buffer, index, count)));
+#endif
         }
 
         public void Send(ATFrame frame)
@@ -122,8 +129,10 @@ namespace BrusDev.IO.Modems
 
                 this.serialPort.Write(this.sendingBuffer, 0, this.sendingLength);
 
+#if (DEBUG)
                 Debug.Print("Sent frame > ");
                 Debug.Print(new string(ATParser.Bytes2Chars(this.sendingBuffer, 0, this.sendingLength)));
+#endif
 
                 this.lastSendDateTime = DateTime.Now;
             }
@@ -186,9 +195,10 @@ namespace BrusDev.IO.Modems
                     {
                         this.receivingBufferCount += readBytes;
 
+#if (DEBUG)
                         Debug.Print("Buffer > ");
                         Debug.Print(new string(ATParser.Bytes2Chars(this.receivingBuffer, this.receivingBufferIndex, this.receivingBufferCount)));
-
+#endif
                         while (this.receivingBufferCount > 0)
                         {
                             //Cerco il primo delimitatore.
@@ -214,10 +224,6 @@ namespace BrusDev.IO.Modems
 
                             if (this.receivingBufferCount > 0)
                             {
-                                //Cerco il secondo delimitatore.
-                                secondDelimiterIndex = this.parser.IndexOfDelimitor(this.receivingBuffer,
-                                    this.receivingBufferIndex, this.receivingBufferCount, true);
-
                                 lock (this.waitingResponseLock)
                                 {
                                     //Verifico se sono in attesa di una risposta.
@@ -230,8 +236,6 @@ namespace BrusDev.IO.Modems
 
                                         if (this.parserResult != null && parserResult.Success)
                                         {
-                                            this.ReadData();
-
                                             //Notifico la ricezione della risposta attesa.
                                             this.waitingResponse = false;
                                             this.waitingFrame = parserResult.Frame;
@@ -250,14 +254,16 @@ namespace BrusDev.IO.Modems
 
                                         if (this.parserResult != null && parserResult.Success)
                                         {
-                                            this.ReadData();
-
                                             //Notifico la ricezione della risposta non attesa.
                                             if (this.FrameReceived != null)
-                                                this.FrameReceived(this, new ATModemFrameEventArgs(this.parserResult.Frame));
+                                                this.FrameReceived(this, ATModemFrameEventArgs.GetInstance(this.parserResult.Frame));
                                         }
                                         else
                                         {
+                                            //Cerco il secondo delimitatore.
+                                            secondDelimiterIndex = this.parser.IndexOfDelimitor(this.receivingBuffer,
+                                                this.receivingBufferIndex, this.receivingBufferCount, true);
+
                                             if (secondDelimiterIndex > this.receivingBufferIndex)
                                             {
                                                 //Cancello il contenuto del buffer fino al secondo delimitatore.
@@ -270,12 +276,102 @@ namespace BrusDev.IO.Modems
                                     }
                                 }
 
+
+                                this.dataLength = parserResult.Frame.DataLength;
+
+                                if (this.dataLength > 0)
+                                {
+                                    this.frameIndex = this.parserResult.Index;
+                                    this.dataIndex = this.frameIndex + this.parserResult.Length;
+                                    this.dataCount = 0;
+
+                                    this.readDataLength = this.receivingBufferIndex + this.receivingBufferCount - this.dataIndex;
+
+                                    if (this.readDataLength > this.dataLength)
+                                        this.readDataLength = this.dataLength;
+
+                                    this.frameData = ATFrameData.GetInstance(parserResult.Frame);
+
+                                    if (this.readDataLength > 0)
+                                    {
+                                        this.frameData.Write(this.receivingBuffer, this.dataIndex, this.readDataLength);
+
+#if (DEBUG)
+                                        Debug.Print("ReadData data > ");
+                                        Debug.Print(new string(ATParser.Bytes2Chars(this.receivingBuffer, this.dataIndex, this.readDataLength)));
+#endif
+
+                                        this.dataCount += this.readDataLength;
+
+                                        //Notifico la ricezione dei dati della risposta.
+                                        if (this.FrameDataReceived != null)
+                                            this.FrameDataReceived(this, ATModemFrameDataEventArgs.GetInstance(this.frameData));
+
+                                        this.receivingBufferCount -= this.readDataLength;
+                                        this.readDataLength = 0;
+                                    }
+
+                                    //Check if read bytes from the serial port.
+                                    if (this.dataCount < this.dataLength)
+                                    {
+                                        while (this.dataCount < this.dataLength)
+                                        {
+                                            this.dataTicks = Environment.TickCount;
+
+                                            readBytes = this.serialPort.Read(this.receivingBuffer, this.frameIndex, receivingBufferSize - this.frameIndex);
+
+#if (DEBUG)
+                                            Debug.Print("Buffer > ");
+                                            Debug.Print(new string(ATParser.Bytes2Chars(this.receivingBuffer, this.frameIndex, readBytes)));
+#endif
+
+                                            //Check the data timeout.
+                                            if (Environment.TickCount - this.dataTicks > defaultDataTimeout)
+                                            {
+                                                this.readDataLength = 0;
+                                                break;
+                                            }
+
+                                            this.readDataLength = this.dataLength - this.dataCount;
+
+                                            if (readBytes < this.readDataLength)
+                                                this.readDataLength = readBytes;
+
+                                            this.frameData.Write(this.receivingBuffer, this.frameIndex, this.readDataLength);
+
+#if (DEBUG)
+                                            Debug.Print("ReadData data > ");
+                                            Debug.Print(new string(ATParser.Bytes2Chars(this.receivingBuffer, this.frameIndex, this.readDataLength)));
+#endif
+
+                                            this.dataCount += this.readDataLength;
+
+                                            //Notifico la ricezione dei dati della risposta.
+                                            if (this.FrameDataReceived != null)
+                                                this.FrameDataReceived(this, ATModemFrameDataEventArgs.GetInstance(this.frameData));
+                                        }
+
+                                        this.receivingBufferCount += (readBytes - this.parserResult.Length);
+                                        this.readDataLength -= this.parserResult.Length;
+                                    }
+                                }
+                                else
+                                {
+                                    this.readDataLength = 0;
+                                }
+
+
                                 //Cancello il contenuto del buffer relativo alla risposta e ai dati.
                                 movingBytes = this.receivingBufferIndex + this.receivingBufferCount -
                                     this.parserResult.Index - this.parserResult.Length - this.readDataLength;
-                                Array.Copy(this.receivingBuffer, parserResult.Index + parserResult.Length,
-                                    this.receivingBuffer, parserResult.Index, movingBytes);
-                                this.receivingBufferCount = this.receivingBufferCount - parserResult.Length - this.readDataLength;
+
+                                if (movingBytes > 0)
+                                {
+                                    Array.Copy(this.receivingBuffer, this.receivingBufferIndex + this.receivingBufferCount -
+                                        movingBytes, this.receivingBuffer, parserResult.Index, movingBytes);
+                                }
+
+                                this.receivingBufferCount -= (parserResult.Length + this.readDataLength);
                             }
                         }
 
@@ -300,52 +396,6 @@ namespace BrusDev.IO.Modems
             catch (Exception exception)
             {
                 exception.ToString();
-            }
-        }
-
-        private void ReadData()
-        {
-            int readingDataCount;
-
-
-            this.dataLength = parserResult.Frame.DataLength;
-
-
-            if (this.dataLength > 0)
-            {
-                this.dataIndex = this.parserResult.Index + this.parserResult.Length;
-                this.dataCount = 0;
-
-                this.readDataLength = this.receivingBufferIndex + this.receivingBufferCount - this.dataIndex;
-
-                this.parserResult.Frame.Data = new byte[this.dataLength];
-                this.parserResult.Frame.DataSuccess = true;
-
-
-                if (this.readDataLength > 0)
-                {
-                    Array.Copy(this.receivingBuffer, this.dataIndex, parserResult.Frame.Data, 0, this.readDataLength);
-
-                    Debug.Print("ReadData data > ");
-                    Debug.Print(new string(ATParser.Bytes2Chars(parserResult.Frame.Data, 0, this.readDataLength)));
-
-                    this.dataCount += this.readDataLength;
-                }
-
-                //Check if read bytes from the serial port.
-                while (this.dataCount < this.dataLength)
-                {
-                    readingDataCount = this.serialPort.Read(parserResult.Frame.Data, this.dataCount, this.dataLength - this.dataCount);
-
-                    Debug.Print("ReadData data > ");
-                    Debug.Print(new string(ATParser.Bytes2Chars(parserResult.Frame.Data, this.dataCount, readingDataCount)));
-
-                    this.dataCount += readingDataCount;
-                }
-            }
-            else
-            {
-                this.readDataLength = 0;
             }
         }
     }

@@ -29,7 +29,7 @@ namespace BrusDev.IO.Modems.Parsers
                 ATFrame responseFrame = ATFrame.Instance;
 
 
-                parserResult = ATParserResult.Instance;
+                parserResult = this.Unsolicited ? ATParserResult.UnsolicitedInstance : ATParserResult.Instance;
                 parserResult.Success = true;
                 parserResult.Frame = responseFrame;
                 parserResult.Index = responseMatch.Index;

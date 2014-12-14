@@ -7,6 +7,7 @@ namespace BrusDev.IO.Modems.Parsers
     public class ATParserResult
     {
         public static ATParserResult Instance = new ATParserResult();
+        public static ATParserResult UnsolicitedInstance = new ATParserResult();
 
         public bool Success { get; set; }
         public ATFrame Frame { get; set; }

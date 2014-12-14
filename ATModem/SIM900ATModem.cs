@@ -32,6 +32,7 @@ namespace BrusDev.IO.Modems
         {
             this.protocol = new ATProtocol(new SIM900ATParser());
             this.protocol.FrameReceived += protocol_FrameReceived;
+            this.protocol.FrameDataReceived += protocol_FrameDataReceived;
 
             this.connectionEvent = new ManualResetEvent(false);
             this.dnsQueryEvent = new ManualResetEvent(false);
@@ -59,17 +60,6 @@ namespace BrusDev.IO.Modems
                 this.sendResult = responseFrame.Result;
                 this.sendEvent.Set();
             }
-            else if (responseFrame.Command == ATCommand.IPD)
-            {
-                if (responseFrame.DataSuccess)
-                {
-                    this.AddReceivedData(responseFrame.Data);
-                }
-                else
-                {
-                    this.DisconnectIPClient();
-                }
-            }
             else if (responseFrame.Command == ATCommand.CLOSED)
             {
                 lock (connectionSyncRoot)
@@ -84,6 +74,22 @@ namespace BrusDev.IO.Modems
             else if (responseFrame.Command == ATCommand.SEND_PROMPT)
             {
                 this.sendPromptEvent.Set();
+            }
+        }
+
+        private void protocol_FrameDataReceived(object sender, ATModemFrameDataEventArgs e)
+        {
+            ATFrameData responseFrameData = e.FrameData;
+            ATFrame responseFrame = responseFrameData.Frame;
+
+
+            if (responseFrame.Command == ATCommand.IPD)
+            {
+                byte[] data = new byte[responseFrameData.Available];
+
+                responseFrameData.Read(data, 0, data.Length);
+
+                this.AddReceivedData(data);
             }
         }
 

@@ -21,8 +21,6 @@ namespace BrusDev.IO.Modems.Frames
         public string Result { get; set; }
         public string OutParameters { get; set; }
         public int DataLength { get; set; }
-        public byte[] Data { get; set; }
-        public bool DataSuccess { get; set; }
 
         public int GetBytes(byte[] bytes, int byteIndex)
         {

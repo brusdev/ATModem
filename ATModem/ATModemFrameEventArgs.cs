@@ -5,6 +5,8 @@ namespace BrusDev.IO.Modems
 {
     public class ATModemFrameEventArgs
     {
+        private static ATModemFrameEventArgs instance = new ATModemFrameEventArgs(null);
+
         private ATFrame frame;
 
 
@@ -14,6 +16,12 @@ namespace BrusDev.IO.Modems
         public ATModemFrameEventArgs(ATFrame frame)
         {
             this.frame = frame;
+        }
+
+        public static ATModemFrameEventArgs GetInstance(ATFrame frame)
+        {
+            instance.frame = frame;
+            return instance;
         }
     }
 }

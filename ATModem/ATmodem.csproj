@@ -7,7 +7,7 @@
     <ProjectGuid>{6C2BAB53-C0DC-41F7-AF83-A4AB43B20E8C}</ProjectGuid>
     <OutputType>Library</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>ATModem</RootNamespace>
+    <RootNamespace>BrusDev.IO.Modems</RootNamespace>
     <AssemblyName>ATModem</AssemblyName>
     <TargetFrameworkVersion>v2.0</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
@@ -40,10 +40,15 @@
     <Compile Include="ATModemError.cs" />
     <Compile Include="ATModemEventHandler.cs" />
     <Compile Include="ATModemException.cs" />
+    <Compile Include="ATModemFrameEventArgs.cs" />
+    <Compile Include="ATModemFrameEventHandler.cs" />
+    <Compile Include="ATModemFrameDataEventArgs.cs" />
+    <Compile Include="ATModemFrameDataEventHandler.cs" />
     <Compile Include="Frames\ATCommand.cs" />
     <Compile Include="Frames\ATCommandType.cs" />
     <Compile Include="Frames\ATFrame.cs" />
     <Compile Include="ATModem.cs" />
+    <Compile Include="Frames\ATFrameData.cs" />
     <Compile Include="Parsers\ATFrameParser.cs" />
     <Compile Include="Parsers\ATParser.cs" />
     <Compile Include="Parsers\ATParserResult.cs" />

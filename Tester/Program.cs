@@ -18,15 +18,14 @@ namespace Tester
             byte[] sendingBuffer;
             byte[] receivingBuffer;
             string remoteIPAddress;
-            StringBuilder receivedStringBuilder;
 
 
             receivingBuffer = new byte[128];
-            receivedStringBuilder = new StringBuilder();
 
             modem = new SIM900ATModem();
             modem.Open("COM1", 19200, System.IO.Ports.Parity.None, 8, System.IO.Ports.StopBits.One, System.IO.Ports.Handshake.None);
-            modem.AccessPointName = "web.omnitel.it";
+            //modem.AccessPointName = "web.omnitel.it";
+            modem.AccessPointName = "internet.wind";
             modem.ClientConnected += modem_ClientConnected;
             modem.ClientDisconnected += modem_ClientDisconnected;
             modem.DataReceived += modem_DataReceived;
@@ -44,7 +43,8 @@ namespace Tester
 
             while ((receivedBytes = modem.ReceiveData(receivingBuffer, 0, receivingBuffer.Length)) > 0)
             {
-                receivedStringBuilder.Append(Encoding.UTF8.GetChars(receivingBuffer, 0, receivedBytes));
+                Debug.Print("ReceiveData >");
+                Debug.Print(new string(Encoding.UTF8.GetChars(receivingBuffer, 0, receivedBytes)));
             }
 
             modem.DisconnectIPClient();
