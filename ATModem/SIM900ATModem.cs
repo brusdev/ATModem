@@ -5,14 +5,16 @@ using Microsoft.SPOT;
 #endif
 using System;
 using System.Collections;
-using System.IO.Ports;
 using System.Text;
 using System.Threading;
+using System.IO;
 
 namespace BrusDev.IO.Modems
 {
     public class SIM900ATModem : ATModem
     {
+        private bool disposed = false;
+
         private ATProtocol protocol;
 
         private ManualResetEvent connectionEvent;
@@ -28,11 +30,10 @@ namespace BrusDev.IO.Modems
         private object connectionSyncRoot;
 
 
-        public SIM900ATModem()
+        public SIM900ATModem(Stream stream)
         {
-            this.protocol = new ATProtocol(new SIM900ATParser());
+            this.protocol = new ATProtocol(stream, SIM900ATParser.GetInstance());
             this.protocol.FrameReceived += protocol_FrameReceived;
-            this.protocol.FrameDataReceived += protocol_FrameDataReceived;
 
             this.connectionEvent = new ManualResetEvent(false);
             this.dnsQueryEvent = new ManualResetEvent(false);
@@ -40,6 +41,8 @@ namespace BrusDev.IO.Modems
             this.sendPromptEvent = new ManualResetEvent(false);
 
             this.connectionSyncRoot = new object();
+
+            this.Initialize();
         }
 
         private void protocol_FrameReceived(object sender, ATModemFrameEventArgs e)
@@ -75,30 +78,12 @@ namespace BrusDev.IO.Modems
             {
                 this.sendPromptEvent.Set();
             }
-        }
-
-        private void protocol_FrameDataReceived(object sender, ATModemFrameDataEventArgs e)
-        {
-            ATFrameData responseFrameData = e.FrameData;
-            ATFrame responseFrame = responseFrameData.Frame;
-
-
-            if (responseFrame.Command == ATCommand.IPD)
+            else if (responseFrame.Command == ATCommand.IPD)
             {
-                byte[] data = new byte[responseFrameData.Available];
-
-                responseFrameData.Read(data, 0, data.Length);
-
-                this.AddReceivedData(data);
+                this.SetDataFrame(responseFrame);
             }
         }
 
-        public override void Open(string portName, int baudRate, Parity parity, int dataBits, StopBits stopBits, Handshake handshake)
-        {
-            this.protocol.Open(portName, baudRate, parity, dataBits, stopBits, handshake);
-
-            this.Initialize();
-        }
 
         private void Initialize()
         {
@@ -133,10 +118,7 @@ namespace BrusDev.IO.Modems
         public int GetCallWaitingControl()
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = ATFrame.Instance;
-
-            requestFrame.Command = ATCommand.AT_CCWA;
-            requestFrame.CommandType = ATCommandType.Read;
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CCWA, ATCommandType.Read, null);
 
             responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 
@@ -146,10 +128,7 @@ namespace BrusDev.IO.Modems
         public void SetEchoMode(bool mode)
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = ATFrame.Instance;
-
-            requestFrame.Command = mode ? ATCommand.ATE1 : ATCommand.ATE0;
-            requestFrame.CommandType = ATCommandType.Execution;
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(mode ? ATCommand.ATE1 : ATCommand.ATE0, ATCommandType.Execution, null);
 
             responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 
@@ -160,11 +139,7 @@ namespace BrusDev.IO.Modems
         public void AddIPHead(bool mode)
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = ATFrame.Instance;
-
-            requestFrame.Command = ATCommand.AT_CIPHEAD;
-            requestFrame.CommandType = ATCommandType.Write;
-            requestFrame.InParameters = (mode ? "1" : "0");
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPHEAD, ATCommandType.Write, mode ? "1" : "0");
 
             responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 
@@ -175,23 +150,9 @@ namespace BrusDev.IO.Modems
         private void SetAPNSettings(string apn, string username, string password)
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = ATFrame.Instance;
-
-            requestFrame.Command = ATCommand.AT_CSTT;
-            requestFrame.CommandType = ATCommandType.Write;
-            if (username != null && username.Length > 0 && password != null && password.Length > 0)
-            {
-                requestFrame.InParameters = String.Concat("\"", apn, "\",\"", username, "\",\"", password, "\"");
-            }
-            else if (username != null && username.Length > 0 && password != null && password.Length > 0)
-            {
-                requestFrame.InParameters = String.Concat("\"", apn, "\",\"", password, "\"");
-            }
-            else
-            {
-                requestFrame.InParameters = String.Concat("\"", apn, "\"");
-            }
-
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CSTT, ATCommandType.Write,
+                (username != null && username.Length > 0 && password != null && password.Length > 0) ?
+                String.Concat("\"", apn, "\",\"", username, "\",\"", password, "\"") : String.Concat("\"", apn, "\""));
 
             responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 
@@ -202,11 +163,7 @@ namespace BrusDev.IO.Modems
         public override void SetDNSSettings(string primaryIPAddress, string secondaryIPAddress)
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = ATFrame.Instance;
-
-            requestFrame.Command = ATCommand.AT_CDNSCFG;
-            requestFrame.CommandType = ATCommandType.Write;
-            requestFrame.InParameters = String.Concat(primaryIPAddress, ",", secondaryIPAddress);
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CDNSCFG, ATCommandType.Write, String.Concat(primaryIPAddress, ",", secondaryIPAddress));
 
             responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 
@@ -217,10 +174,7 @@ namespace BrusDev.IO.Modems
         public void BringUpWirelessConnection()
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = ATFrame.Instance;
-
-            requestFrame.Command = ATCommand.AT_CIICR;
-            requestFrame.CommandType = ATCommandType.Execution;
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIICR, ATCommandType.Execution, null);
 
             responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 
@@ -249,10 +203,7 @@ namespace BrusDev.IO.Modems
         public override string GetLocalIPAddress()
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = ATFrame.Instance;
-
-            requestFrame.Command = ATCommand.AT_CIFSR;
-            requestFrame.CommandType = ATCommandType.Execution;
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIFSR, ATCommandType.Execution, null);
 
             responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 
@@ -265,11 +216,7 @@ namespace BrusDev.IO.Modems
         public void SetConnectionMode(bool mode)
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = ATFrame.Instance;
-
-            requestFrame.Command = ATCommand.AT_CIPMODE;
-            requestFrame.CommandType = ATCommandType.Write;
-            requestFrame.InParameters = (mode ? "1" : "0");
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPMODE, ATCommandType.Write, mode ? "1" : "0");
 
             responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 
@@ -280,11 +227,7 @@ namespace BrusDev.IO.Modems
         public void StartUpMultiIPConnection(bool mode)
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = ATFrame.Instance;
-
-            requestFrame.Command = ATCommand.AT_CIPMUX;
-            requestFrame.CommandType = ATCommandType.Write;
-            requestFrame.InParameters = (mode ? "1" : "0");
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPMUX, ATCommandType.Write, mode ? "1" : "0");
 
             responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 
@@ -295,11 +238,7 @@ namespace BrusDev.IO.Modems
         public void SetPromptWhenModuleSendsData(int mode)
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = ATFrame.Instance;
-
-            requestFrame.Command = ATCommand.AT_CIPSPRT;
-            requestFrame.CommandType = ATCommandType.Write;
-            requestFrame.InParameters = mode.ToString();
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPSPRT, ATCommandType.Write, mode.ToString());
 
             responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 
@@ -315,11 +254,8 @@ namespace BrusDev.IO.Modems
         public override void ConnectIPClient(string mode, string ipAddress, int port, int timeout)
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = ATFrame.Instance;
-
-            requestFrame.Command = ATCommand.AT_CIPSTART;
-            requestFrame.CommandType = ATCommandType.Write;
-            requestFrame.InParameters = String.Concat("\"", mode, "\",\"", ipAddress, "\",", port.ToString());
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPSTART, ATCommandType.Write,
+                String.Concat("\"", mode, "\",\"", ipAddress, "\",", port.ToString()));
 
             this.connectionEvent.Reset();
 
@@ -345,23 +281,13 @@ namespace BrusDev.IO.Modems
         public override string QueryDNSIPAddress(string domainName, int timeout)
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = ATFrame.Instance;
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CDNSGIP, ATCommandType.Write,
+                String.Concat("\"" + domainName + "\""));
             string[] dnsParametersTokens = null;
-            long endTimeoutTicks = 0;
+            int endTimeoutTicks = 0;
 
-            if(timeout != Timeout.Infinite)
-#if MF_FRAMEWORK
-                endTimeoutTicks = Microsoft.SPOT.Hardware.Utility.GetMachineTime().Ticks
-                    + timeout * System.TimeSpan.TicksPerMillisecond;
-#else
-                endTimeoutTicks = DateTime.Now.Ticks
-                    + timeout * System.TimeSpan.TicksPerMillisecond;
-#endif
-
-                requestFrame.Command = ATCommand.AT_CDNSGIP;
-            requestFrame.CommandType = ATCommandType.Write;
-            requestFrame.InParameters = String.Concat("\"" + domainName + "\"");
-
+            if (timeout != Timeout.Infinite)
+                endTimeoutTicks = Environment.TickCount + timeout;
 
             do
             {
@@ -378,11 +304,7 @@ namespace BrusDev.IO.Modems
                 dnsParametersTokens = this.dnsQueryParameters.Split(',');
 
                 if (timeout != Timeout.Infinite)
-#if MF_FRAMEWORK
-                    timeout -= (int)((endTimeoutTicks - Microsoft.SPOT.Hardware.Utility.GetMachineTime().Ticks) / System.TimeSpan.TicksPerMillisecond);
-#else
-                    timeout -= (int)((endTimeoutTicks - DateTime.Now.Ticks) / System.TimeSpan.TicksPerMillisecond);
-#endif
+                    timeout -= endTimeoutTicks - Environment.TickCount;
             }
             while ((dnsParametersTokens == null || dnsParametersTokens.Length < 1 || dnsParametersTokens[0] != "1") &&
                 (timeout == Timeout.Infinite || timeout > 0));
@@ -402,11 +324,7 @@ namespace BrusDev.IO.Modems
         {
             lock (this.protocol)
             {
-                ATFrame requestFrame = ATFrame.Instance;
-
-
-                requestFrame.Command = ATCommand.AT_CIPSEND;
-                requestFrame.CommandType = ATCommandType.Execution;
+                ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPSEND, ATCommandType.Execution, null);
 
                 this.sendEvent.Reset();
                 this.sendPromptEvent.Reset();
@@ -416,9 +334,9 @@ namespace BrusDev.IO.Modems
                 if (!this.sendPromptEvent.WaitOne(timeout, true))
                     throw new ATModemException(ATModemError.Timeout);
 
-                this.protocol.WriteData(buffer, index, count);
+                requestFrame.DataStream.Write(buffer, index, count);
 
-                this.protocol.WriteData(new byte[] { 0x1A }, 0, 1);
+                requestFrame.DataStream.Write(new byte[] { 0x1A }, 0, 1);
 
                 if (!this.sendEvent.WaitOne(timeout, true))
                     throw new ATModemException(ATModemError.Timeout);
@@ -435,15 +353,20 @@ namespace BrusDev.IO.Modems
                 if (this.clientConnected)
                 {
                     ATFrame responseFrame;
-                    ATFrame requestFrame = ATFrame.Instance;
+                    ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPCLOSE, ATCommandType.Execution, null);
 
-                    requestFrame.Command = ATCommand.AT_CIPCLOSE;
-                    requestFrame.CommandType = ATCommandType.Execution;
+                    try
+                    {
+                        responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 
-                    responseFrame = (ATFrame)this.protocol.Process(requestFrame);
-
-                    if (responseFrame.Result == "ERROR" && this.GetConnectionStatus() == "5" || this.GetConnectionStatus() == "6")
-                        throw new ATModemException(ATModemError.Generic);
+                        if (responseFrame.Result == "ERROR")
+                            throw new ATModemException(ATModemError.Generic);
+                    }
+                    catch (ATModemException)
+                    {
+                        if (this.GetConnectionStatus().IndexOf("CLOSED") == -1)
+                            throw new ATModemException(ATModemError.Generic);
+                    }
 
                     this.OnClientDisconnected(EventArgs.Empty);
                 }
@@ -453,10 +376,7 @@ namespace BrusDev.IO.Modems
         public override void CloseDataConnection()
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = ATFrame.Instance;
-
-            requestFrame.Command = ATCommand.AT_CIPSHUT;
-            requestFrame.CommandType = ATCommandType.Execution;
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPSHUT, ATCommandType.Execution, null);
 
             responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 
@@ -467,10 +387,7 @@ namespace BrusDev.IO.Modems
         public override string GetPinRequired()
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = ATFrame.Instance;
-
-            requestFrame.Command = ATCommand.AT_CPIN;
-            requestFrame.CommandType = ATCommandType.Read;
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CPIN, ATCommandType.Read, null);
 
             responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 
@@ -483,10 +400,7 @@ namespace BrusDev.IO.Modems
         public override string GetSignalQualityReport()
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = ATFrame.Instance;
-
-            requestFrame.Command = ATCommand.AT_CSQ;
-            requestFrame.CommandType = ATCommandType.Execution;
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CSQ, ATCommandType.Execution, null);
 
             responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 
@@ -499,10 +413,7 @@ namespace BrusDev.IO.Modems
         public override string GetGsmNetworkRegistration()
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = ATFrame.Instance;
-
-            requestFrame.Command = ATCommand.AT_CREG;
-            requestFrame.CommandType = ATCommandType.Read;
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CREG, ATCommandType.Read, null);
 
             responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 
@@ -515,10 +426,7 @@ namespace BrusDev.IO.Modems
         public override string GetGprsNetworkRegistration()
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = ATFrame.Instance;
-
-            requestFrame.Command = ATCommand.AT_CGREG;
-            requestFrame.CommandType = ATCommandType.Read;
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CGREG, ATCommandType.Read, null);
 
             responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 
@@ -531,10 +439,7 @@ namespace BrusDev.IO.Modems
         public override string GetGPRSServiceState()
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = ATFrame.Instance;
-
-            requestFrame.Command = ATCommand.AT_CGATT;
-            requestFrame.CommandType = ATCommandType.Read;
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CGATT, ATCommandType.Read, null);
 
             responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 
@@ -547,10 +452,7 @@ namespace BrusDev.IO.Modems
         public override string GetImei()
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = ATFrame.Instance;
-
-            requestFrame.Command = ATCommand.AT_GSN;
-            requestFrame.CommandType = ATCommandType.Execution;
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_GSN, ATCommandType.Execution, null);
 
             responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 
@@ -563,10 +465,7 @@ namespace BrusDev.IO.Modems
         public override string GetConnectionStatus()
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = ATFrame.Instance;
-
-            requestFrame.Command = ATCommand.AT_CIPSTATUS;
-            requestFrame.CommandType = ATCommandType.Execution;
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPSTATUS, ATCommandType.Execution, null);
 
             responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 
@@ -574,6 +473,19 @@ namespace BrusDev.IO.Modems
                 throw new ATModemException(ATModemError.Generic);
 
             return responseFrame.OutParameters;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (!this.disposed)
+            {
+                if (disposing)
+                {
+                    this.protocol.Close();
+                }
+
+                disposed = true;
+            }
         }
     }
 }

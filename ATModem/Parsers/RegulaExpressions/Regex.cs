@@ -708,7 +708,7 @@ namespace BrusDev.Text.RegularExpressions
 
                     return match;
                 }
-                else if (match.index < searchLength && !startAnchored)
+                else if (match.index + 1 < searchLength && !startAnchored)
                 {
                     escaped = false;
                     comparing = false;

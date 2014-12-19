@@ -8,6 +8,13 @@ namespace BrusDev.IO.Modems.Parsers
 {
     public class SIM900ATParser : ATParser
     {
+        private static SIM900ATParser instance = new SIM900ATParser();
+
+        public static SIM900ATParser GetInstance()
+        {
+            return instance;
+        }
+
         private Hashtable frameParsers;
         private ArrayList unsolicitedFrameParsers;
         private byte[] delimitorSequence;
@@ -49,7 +56,7 @@ namespace BrusDev.IO.Modems.Parsers
             this.AddRegexFrameParser(ATCommand.AT_CIPSTART, Frames.ATCommandType.Write,
                 new Regex(@"\r\n(OK|ERROR|\+CME ERROR: [0-9]+|ALREADY CONNECT)\r\n"), 0, 1);
             this.AddRegexFrameParser(ATCommand.AT_CIPCLOSE, Frames.ATCommandType.Execution,
-                new Regex(@"\r\n(CLOSE OK)|(ERROR)\r\n"), 1, 2);
+                new Regex(@"\r\n(CLOSE OK|ERROR)\r\n"), 0, 1);
             this.AddRegexFrameParser(ATCommand.AT_CPIN, Frames.ATCommandType.Read,
                 new Regex(@"\r\n\+CPIN: ([^\r\n]+)\r\n\r\n(OK)\r\n"), 1, 2);
             this.AddRegexFrameParser(ATCommand.AT_CSQ, Frames.ATCommandType.Execution,

@@ -35,20 +35,15 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="ATModemDataEventArgs.cs" />
-    <Compile Include="ATModemDataEventHandler.cs" />
     <Compile Include="ATModemError.cs" />
     <Compile Include="ATModemEventHandler.cs" />
     <Compile Include="ATModemException.cs" />
     <Compile Include="ATModemFrameEventArgs.cs" />
     <Compile Include="ATModemFrameEventHandler.cs" />
-    <Compile Include="ATModemFrameDataEventArgs.cs" />
-    <Compile Include="ATModemFrameDataEventHandler.cs" />
     <Compile Include="Frames\ATCommand.cs" />
     <Compile Include="Frames\ATCommandType.cs" />
     <Compile Include="Frames\ATFrame.cs" />
     <Compile Include="ATModem.cs" />
-    <Compile Include="Frames\ATFrameData.cs" />
     <Compile Include="Parsers\ATFrameParser.cs" />
     <Compile Include="Parsers\ATParser.cs" />
     <Compile Include="Parsers\ATParserResult.cs" />

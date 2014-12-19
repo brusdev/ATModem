@@ -5,29 +5,27 @@ using Microsoft.SPOT;
 #endif
 using System;
 using System.Collections;
-using System.IO.Ports;
 using System.Text;
 using System.Threading;
 
 namespace BrusDev.IO.Modems
 {
-    public abstract class ATModem
+    public abstract class ATModem: IDisposable
     {
         protected bool clientConnected;
 
-        private int dataToReceive;
-        private ArrayList receivedDataBytesList;
-        private ArrayList receivedDataIndexesList;
-        private ManualResetEvent receivedDataReady;
+        private ATFrame dataFrame;
+        private long dataCount;
+        private long dataLength;
+        private bool dataDiscarded;
+        private object dataSyncRoot;
+        private AutoResetEvent dataReady;
 
 
         public event ATModemEventHandler ClientConnected;
         public event ATModemEventHandler ClientDisconnected;
-        public event ATModemDataEventHandler DataReceived;
 
 
-        public int DataToReceive { get { lock (this.receivedDataBytesList) { return this.dataToReceive; } } }
-        
         public string AccessPointName { get; set; }
         public string AccessUsername { get; set; }
         public string AccessPassword { get; set; }
@@ -36,13 +34,14 @@ namespace BrusDev.IO.Modems
         public ATModem()
         {
             this.clientConnected = false;
-            this.receivedDataBytesList = new ArrayList();
-            this.receivedDataIndexesList = new ArrayList();
-            this.receivedDataReady = new ManualResetEvent(false);
 
+            this.dataFrame = null;
+            this.dataCount = 0;
+            this.dataLength = 0;
+            this.dataDiscarded = false;
+            this.dataSyncRoot = new object();
+            this.dataReady = new AutoResetEvent(false);
         }
-
-        public abstract void Open(string portName, int baudRate, Parity parity, int dataBits, StopBits stopBits, Handshake handshake);
 
         public abstract void Close();
 
@@ -86,70 +85,69 @@ namespace BrusDev.IO.Modems
 
         public virtual int ReceiveData(byte[] buffer, int index, int count, int timeout)
         {
-            if (!this.receivedDataReady.WaitOne(timeout, true))
+            if (!this.dataReady.WaitOne(timeout, true))
                 throw new ATModemException(ATModemError.Timeout);
 
-
-            lock (this.receivedDataBytesList)
+            lock (this.dataSyncRoot)
             {
-                if(this.receivedDataBytesList.Count > 0)
+                if (!this.clientConnected || this.dataDiscarded)
                 {
-                    byte[] receivedDataByte = (byte[])this.receivedDataBytesList[0];
-                    int receivedDataIndex = (int)this.receivedDataIndexesList[0];
-                    int receivedDataCount = receivedDataByte.Length - receivedDataIndex;
+                    this.dataReady.Set();
 
-                    if (count > receivedDataCount)
-                        count = receivedDataCount;
-
-                    Array.Copy(receivedDataByte, receivedDataIndex, buffer, index, count);
-
-                    receivedDataIndex += count;
-
-                    if (receivedDataIndex == receivedDataByte.Length)
-                    {
-                        this.receivedDataBytesList.RemoveAt(0);
-                        this.receivedDataIndexesList.RemoveAt(0);
-
-                        if (this.clientConnected && this.receivedDataBytesList.Count == 0)
-                            this.receivedDataReady.Reset();
-                    }
-                    else
-                    {
-                        this.receivedDataIndexesList[0] = receivedDataIndex;
-                    }
-
-                    return count;
+                    return 0;
                 }
-            }
 
-            return 0;
+                count = dataFrame.DataStream.Read(buffer, index, count);
+
+                //Verifico se sono andati persi dei dati della frame.
+                if (count == 0 && this.dataCount < this.dataLength)
+                {
+                    this.dataDiscarded = true;
+                }
+
+                this.dataCount += count;
+
+                //Verifico se la lettura dei dati della frame è incompleta.
+                if (this.dataCount < this.dataLength)
+                {
+                    this.dataReady.Set();
+                }
+
+                return count;
+            }
         }
 
-        protected void AddReceivedData(byte[] data)
+        protected void SetDataFrame(ATFrame frame)
         {
-            lock (this.receivedDataBytesList)
+            lock (this.dataSyncRoot)
             {
-                if (data.Length > 0)
+                if (this.dataCount < this.dataLength)
                 {
-                    this.dataToReceive += data.Length;
-                    this.receivedDataBytesList.Add(data);
-                    this.receivedDataIndexesList.Add(0);
-
-                    if (this.receivedDataBytesList.Count > 0)
-                        this.receivedDataReady.Set();
-
-                    if (this.DataReceived != null)
-                        this.DataReceived(this, new ATModemDataEventArgs(data));
+                    this.dataDiscarded = true;
+                    this.dataFrame = null;
                 }
+                else
+                {
+                    this.dataFrame = frame;
+                    this.dataCount = 0;
+                    this.dataLength = frame.DataStream.Length;
+                }
+
+                this.dataReady.Set();
             }
         }
 
         protected void OnClientConnected(EventArgs e)
         {
-            lock (this.receivedDataBytesList)
+            lock (this.dataSyncRoot)
             {
                 this.clientConnected = true;
-                this.receivedDataReady.Reset();
+
+                this.dataCount = 0;
+                this.dataLength = 0;
+                this.dataDiscarded = false;
+                this.dataFrame = null;
+                this.dataReady.Reset();
 
                 if (this.ClientConnected != null)
                     this.ClientConnected(this, EventArgs.Empty);
@@ -158,18 +156,29 @@ namespace BrusDev.IO.Modems
 
         protected void OnClientDisconnected(EventArgs e)
         {
-            lock (this.receivedDataBytesList)
+            lock (this.dataSyncRoot)
             {
                 this.clientConnected = false;
 
-                this.receivedDataBytesList.Clear();
-                this.receivedDataIndexesList.Clear();
-
-                this.receivedDataReady.Set();
+                this.dataReady.Set();
 
                 if (this.ClientDisconnected != null)
                     this.ClientDisconnected(this, EventArgs.Empty);
             }
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+
+            GC.SuppressFinalize(this);
+        }
+
+        protected abstract void Dispose(bool disposing);
+
+        ~ATModem()
+        {
+            Dispose(false);
         }
     }
 }

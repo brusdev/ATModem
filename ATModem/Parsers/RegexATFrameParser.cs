@@ -26,52 +26,46 @@ namespace BrusDev.IO.Modems.Parsers
 
             if (responseMatch.Success)
             {
-                ATFrame responseFrame = ATFrame.Instance;
-
-
                 parserResult = this.Unsolicited ? ATParserResult.UnsolicitedInstance : ATParserResult.Instance;
+                parserResult.Command = this.Command;
+                parserResult.CommandType = this.CommandType;
+                parserResult.Unsolicited = this.Unsolicited;
                 parserResult.Success = true;
-                parserResult.Frame = responseFrame;
                 parserResult.Index = responseMatch.Index;
                 parserResult.Length = responseMatch.Length;
-
-                responseFrame.Command = this.Command;
-                responseFrame.CommandType = this.CommandType;
-                responseFrame.Unsolicited = this.Unsolicited;
-
-                if (this.RegexParametersGroup > 0 &&
-                    this.RegexParametersGroup < responseMatch.Groups.Length &&
-                    responseMatch.Groups[this.RegexParametersGroup].Success)
-                {
-                    responseFrame.OutParameters = this.GetText(buffer, responseMatch.Groups[this.RegexParametersGroup].index, responseMatch.Groups[this.RegexParametersGroup].length);
-                }
-                else
-                {
-                    responseFrame.OutParameters = null;
-                }
 
                 if (this.RegexResultGroup > 0 &&
                     this.RegexResultGroup < responseMatch.Groups.Length &&
                     responseMatch.Groups[this.RegexResultGroup].Success)
                 {
-                    responseFrame.Result = this.GetText(buffer, responseMatch.Groups[this.RegexResultGroup].index, responseMatch.Groups[this.RegexResultGroup].length);
+                    parserResult.Result = this.GetText(buffer, responseMatch.Groups[this.RegexResultGroup].index, responseMatch.Groups[this.RegexResultGroup].length);
                 }
                 else
                 {
-                    responseFrame.Result = null;
+                    parserResult.Result = null;
+                }
+
+                if (this.RegexParametersGroup > 0 &&
+                    this.RegexParametersGroup < responseMatch.Groups.Length &&
+                    responseMatch.Groups[this.RegexParametersGroup].Success)
+                {
+                    parserResult.OutParameters = this.GetText(buffer, responseMatch.Groups[this.RegexParametersGroup].index, responseMatch.Groups[this.RegexParametersGroup].length);
+                }
+                else
+                {
+                    parserResult.OutParameters = null;
                 }
 
                 if (this.RegexDataLengthGroup > 0 &&
                     this.RegexDataLengthGroup < responseMatch.Groups.Length &&
                     responseMatch.Groups[this.RegexDataLengthGroup].Success)
                 {
-                    responseFrame.DataLength = Convert.ToInt32(this.GetText(buffer, responseMatch.Groups[this.RegexDataLengthGroup].index, responseMatch.Groups[this.RegexDataLengthGroup].length));
+                    parserResult.DataLength = Convert.ToInt32(this.GetText(buffer, responseMatch.Groups[this.RegexDataLengthGroup].index, responseMatch.Groups[this.RegexDataLengthGroup].length));
                 }
                 else
                 {
-                    responseFrame.DataLength = 0;
+                    parserResult.DataLength = 0;
                 }
-
             }
 
             return parserResult;

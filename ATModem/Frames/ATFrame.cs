@@ -1,4 +1,8 @@
-﻿using System;
+﻿#if MF_FRAMEWORK
+using Microsoft.SPOT;
+#endif
+using System;
+using System.IO;
 using System.Text;
 
 namespace BrusDev.IO.Modems.Frames
@@ -10,17 +14,54 @@ namespace BrusDev.IO.Modems.Frames
         private const byte byte_CarriageReturn = (byte)'\r';
         private static StringBuilder commandStringBuilder = new StringBuilder();
 
-        public static ATFrame Instance = new ATFrame();
+        private static ATFrame requestInstance = new ATFrame();
+        private static ATFrame responseInstance = new ATFrame();
+        private static ATFrame unsolicitedResponseInstance = new ATFrame();
+
+        private string command;
+        private ATCommandType commandType;
+        private Stream dataStream;
+
+        private string inParameters;
+
+        private bool unsolicited;
+        private string result;
+        private string outParameters;
 
 
-        public string Command { get; set; }
-        public ATCommandType CommandType { get; set; }
-        public string InParameters { get; set; }
 
-        public bool Unsolicited { get; set; }
-        public string Result { get; set; }
-        public string OutParameters { get; set; }
-        public int DataLength { get; set; }
+        public string Command { get { return this.command; } }
+        public ATCommandType CommandType { get { return this.commandType; } }
+        public string InParameters { get { return this.inParameters; } }
+
+        public bool Unsolicited { get { return this.unsolicited; } }
+        public string Result { get { return this.result; } }
+        public string OutParameters { get { return this.outParameters; } }
+
+        public Stream DataStream { get { return this.dataStream; } }
+
+
+        private ATFrame()
+        {
+        }
+
+        public ATFrame(string command, ATCommandType commandType, Stream dataStream, string inParameters)
+        {
+            this.command = command;
+            this.commandType = commandType;
+            this.dataStream = dataStream;
+            this.inParameters = inParameters;
+        }
+
+        public ATFrame(string command, ATCommandType commandType, Stream dataStream, bool unsolicited, string result, string outParameters)
+        {
+            this.command = command;
+            this.commandType = commandType;
+            this.dataStream = dataStream;
+            this.unsolicited = unsolicited;
+            this.result = result;
+            this.outParameters = outParameters;
+        }
 
         public int GetBytes(byte[] bytes, int byteIndex)
         {
@@ -57,6 +98,34 @@ namespace BrusDev.IO.Modems.Frames
 
                 return index - byteIndex;
             }
+        }
+
+        public static ATFrame GetInstance(string command, ATCommandType commandType, Stream dataStream, string inParameters)
+        {
+            ATFrame instance = requestInstance;
+
+            instance.command = command;
+            instance.commandType = commandType;
+            instance.dataStream = dataStream;
+
+            instance.inParameters = inParameters;
+
+            return instance;
+        }
+
+        public static ATFrame GetInstance(string command, ATCommandType commandType, Stream dataStream, bool unsolicited, string result, string outParameters)
+        {
+            ATFrame instance = unsolicited ? unsolicitedResponseInstance : responseInstance;
+
+            instance.command = command;
+            instance.commandType = commandType;
+            instance.dataStream = dataStream;
+
+            instance.unsolicited = unsolicited;
+            instance.result = result;
+            instance.outParameters = outParameters;
+
+            return instance;
         }
     }
 }
