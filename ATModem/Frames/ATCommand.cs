@@ -4,6 +4,7 @@ namespace BrusDev.IO.Modems.Frames
 {
     public class ATCommand
     {
+        public const string AT = "AT";
         public const string ATE0 = "ATE0";
         public const string ATE1 = "ATE1";
         public const string AT_CCWA = "AT+CCWA";
@@ -19,6 +20,7 @@ namespace BrusDev.IO.Modems.Frames
         public const string AT_CIPSTART = "AT+CIPSTART";
         public const string AT_CIPSEND = "AT+CIPSEND";
         public const string AT_CIPCLOSE = "AT+CIPCLOSE";
+        public const string AT_CIPSERVER = "AT+CIPSERVER";
         public const string AT_CPIN = "AT+CPIN";
         public const string AT_CSQ = "AT+CSQ";
         public const string AT_CREG = "AT+CREG";
@@ -37,5 +39,16 @@ namespace BrusDev.IO.Modems.Frames
         public const string NORMAL_POWER_DOWN = "NORMAL POWER DOWN";
         public const string SEND_PROMPT = "SEND PROMPT";
         public const string CLOSED = "CLOSED";
+        public const string REMOTE_IP = "REMOTE IP";
+        public const string RECEIVE = "RECEIVE";
+
+
+        /***ESP8266***/
+        public const string AT_GMR = "AT+GMR";
+        public const string AT_RST = "AT+RST";
+        public const string AT_CWMODE = "AT+CWMODE";
+        public const string AT_CWJAP = "AT+CWJAP";
+        public const string AT_CWQAP = "AT+CWQAP";
+
     }
 }

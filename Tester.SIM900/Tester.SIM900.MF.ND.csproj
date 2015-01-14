@@ -45,7 +45,7 @@
   <ItemGroup>
     <ProjectReference Include="..\ATModem\ATModem.MF.csproj">
       <Project>{AF216845-EADB-45F7-8711-BBC3D84C23FD}</Project>
-      <Name>ATSerialDriver.MF</Name>
+      <Name>ATModem.MF</Name>
     </ProjectReference>
   </ItemGroup>
 </Project>

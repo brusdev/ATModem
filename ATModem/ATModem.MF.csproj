@@ -38,20 +38,27 @@
     <Compile Include="ATProtocol.cs" />
     <Compile Include="ATModemFrameEventArgs.cs" />
     <Compile Include="ATModemFrameEventHandler.cs" />
+    <Compile Include="ESP8266ATModem.cs" />
     <Compile Include="Frames\ATCommand.cs" />
     <Compile Include="Frames\ATCommandType.cs" />
     <Compile Include="Frames\ATFrame.cs" />
     <Compile Include="Parsers\ATFrameParser.cs" />
     <Compile Include="Parsers\ATParser.cs" />
     <Compile Include="Parsers\ATParserResult.cs" />
+    <Compile Include="Parsers\ESP8266ATParser.cs" />
+    <Compile Include="Parsers\ListATParser.cs" />
     <Compile Include="Parsers\RegexATFrameParser.cs" />
     <Compile Include="Parsers\RegulaExpressions\Capture.cs" />
     <Compile Include="Parsers\RegulaExpressions\Group.cs" />
     <Compile Include="Parsers\RegulaExpressions\Match.cs" />
     <Compile Include="Parsers\RegulaExpressions\Regex.cs" />
-    <Compile Include="Parsers\SIM900ATParser.cs" />
+    <Compile Include="Parsers\SIM900ATParser.cs">
+      <SubType>Code</SubType>
+    </Compile>
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="SIM900ATModem.cs" />
+    <Compile Include="SIM900ATModem.cs">
+      <SubType>Code</SubType>
+    </Compile>
     <Compile Include="System.Environment.cs" />
   </ItemGroup>
   <ItemGroup>

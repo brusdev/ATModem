@@ -12,6 +12,7 @@ namespace BrusDev.IO.Modems.Frames
         private const byte byte_EqualSign = (byte)'=';
         private const byte byte_QuestionMark = (byte)'?';
         private const byte byte_CarriageReturn = (byte)'\r';
+        private const byte byte_LineFeed = (byte)'\n';
         private static StringBuilder commandStringBuilder = new StringBuilder();
 
         private static ATFrame requestInstance = new ATFrame();
@@ -95,6 +96,7 @@ namespace BrusDev.IO.Modems.Frames
                 }
 
                 bytes[index++] = byte_CarriageReturn;
+                bytes[index++] = byte_LineFeed;
 
                 return index - byteIndex;
             }

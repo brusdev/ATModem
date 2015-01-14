@@ -192,7 +192,7 @@ namespace BrusDev.Text.RegularExpressions
             groupList.Add(group);
 
             //Check if searchList is byte list.
-            if (searchList[searchIndex] is byte)
+            //if (searchList[searchIndex] is byte)
                 searchList = new CharByteList(searchList);
 
             searchLength += searchIndex;
@@ -290,7 +290,6 @@ namespace BrusDev.Text.RegularExpressions
                                     group.success = true;
 
                                     searchIndex = group.index;
-                                    searchingChar = (char)searchList[searchIndex];
                                 }
                                 break;
                             case char_LeftParenthesis:

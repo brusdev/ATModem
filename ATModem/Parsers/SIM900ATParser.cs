@@ -6,7 +6,7 @@ using System.Text;
 
 namespace BrusDev.IO.Modems.Parsers
 {
-    public class SIM900ATParser : ATParser
+    public class SIM900ATParser : BaseATParser
     {
         private static SIM900ATParser instance = new SIM900ATParser();
 
@@ -15,22 +15,13 @@ namespace BrusDev.IO.Modems.Parsers
             return instance;
         }
 
-        private Hashtable frameParsers;
-        private ArrayList unsolicitedFrameParsers;
-        private byte[] delimitorSequence;
-
         public SIM900ATParser()
+            : base(new byte[] { (byte)'\r', (byte)'\n' })
         {
-            Regex simpleResponseRegex = new Regex(@"\r\n(OK|ERROR)\r\n");
-
-
-            this.frameParsers = new Hashtable();
-            this.unsolicitedFrameParsers = new ArrayList();
-            this.delimitorSequence = new byte[] { (byte)'\r', (byte)'\n' };
-
-
             #region Initialize frameParsers...
 
+            this.AddRegexFrameParser(ATCommand.AT, Frames.ATCommandType.Execution,
+                simpleResponseRegex, 0, 1);
             this.AddRegexFrameParser(ATCommand.ATE0, Frames.ATCommandType.Execution,
                 simpleResponseRegex, 0, 1);
             this.AddRegexFrameParser(ATCommand.ATE1, Frames.ATCommandType.Execution,
@@ -55,8 +46,8 @@ namespace BrusDev.IO.Modems.Parsers
                 new Regex(@"\r\n([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})\r\n|\r\n(ERROR)\r\n"), 1, 2);
             this.AddRegexFrameParser(ATCommand.AT_CIPSTART, Frames.ATCommandType.Write,
                 new Regex(@"\r\n(OK|ERROR|\+CME ERROR: [0-9]+|ALREADY CONNECT)\r\n"), 0, 1);
-            this.AddRegexFrameParser(ATCommand.AT_CIPCLOSE, Frames.ATCommandType.Execution,
-                new Regex(@"\r\n(CLOSE OK|ERROR)\r\n"), 0, 1);
+            this.AddRegexFrameParser(ATCommand.AT_CIPCLOSE, Frames.ATCommandType.Write,
+                new Regex(@"\r\n([0-9]),CLOSE OK\r\n|\r\n(ERROR)\r\n"), 1, 2);
             this.AddRegexFrameParser(ATCommand.AT_CPIN, Frames.ATCommandType.Read,
                 new Regex(@"\r\n\+CPIN: ([^\r\n]+)\r\n\r\n(OK)\r\n"), 1, 2);
             this.AddRegexFrameParser(ATCommand.AT_CSQ, Frames.ATCommandType.Execution,
@@ -73,8 +64,10 @@ namespace BrusDev.IO.Modems.Parsers
                 new Regex(@"\r\n\+CCWA: (0|1)\r\n\r\n(OK)\r\n"), 1, 2);
             this.AddRegexFrameParser(ATCommand.AT_CIPSHUT, Frames.ATCommandType.Execution,
                 new Regex(@"\r\nSHUT OK\r\n|\r\n(ERROR)\r\n"), 0, 1);
-            this.AddRegexFrameParser(ATCommand.AT_CIPSTATUS, Frames.ATCommandType.Execution,
-                new Regex(@"\r\n(OK)\r\n\r\nSTATE: ([^\r\n]+)\r\n"), 2, 1);
+            this.AddRegexFrameParser(ATCommand.AT_CIPSTATUS, Frames.ATCommandType.Write,
+                new Regex(@"\r\n\+CIPSTATUS: ([^\r\n]+)\r\n\r\n(OK)\r\n"), 1, 2);
+            this.AddRegexFrameParser(ATCommand.AT_CIPSERVER, Frames.ATCommandType.Write,
+                simpleResponseRegex, 0, 1);
             
             #endregion
 
@@ -86,7 +79,7 @@ namespace BrusDev.IO.Modems.Parsers
                 Command = ATCommand.CONNECT,
                 CommandType = Frames.ATCommandType.Execution,
                 Unsolicited = true,
-                Regex = new Regex(@"^\r\nCONNECT (OK)\r\n"),
+                Regex = new Regex(@"^\r\n([0-9]), CONNECT OK\r\n"),
                 RegexParametersGroup = 1
             });
 
@@ -141,8 +134,9 @@ namespace BrusDev.IO.Modems.Parsers
                 Command = ATCommand.SEND,
                 CommandType = Frames.ATCommandType.Execution,
                 Unsolicited = true,
-                Regex = new Regex(@"^\r\nSEND (OK|FAIL)\r\n"),
-                RegexResultGroup = 1
+                Regex = new Regex(@"^\r\n([0-9]), SEND (OK|FAIL)\r\n"),
+                RegexParametersGroup = 1,
+                RegexResultGroup = 2
             });
 
             this.AddUnsolicitedFrameParser(new RegexATFrameParser()
@@ -166,71 +160,31 @@ namespace BrusDev.IO.Modems.Parsers
                 Command = ATCommand.CLOSED,
                 CommandType = Frames.ATCommandType.Execution,
                 Unsolicited = true,
-                Regex = new Regex(@"^\r\nCLOSED\r\n"),
+                Regex = new Regex(@"^\r\n([0-9]), CLOSED\r\n"),
+                RegexParametersGroup = 1
+            });
+
+            this.AddUnsolicitedFrameParser(new RegexATFrameParser()
+            {
+                Command = ATCommand.REMOTE_IP,
+                CommandType = Frames.ATCommandType.Execution,
+                Unsolicited = true,
+                Regex = new Regex(@"^\r\n([0-9]), REMOTE IP: ([^\r]+)\r\n"),
+                RegexParametersGroup = 1,
+                RegexResultGroup = 2
+            });
+
+            this.AddUnsolicitedFrameParser(new RegexATFrameParser()
+            {
+                Command = ATCommand.RECEIVE,
+                CommandType = Frames.ATCommandType.Execution,
+                Unsolicited = true,
+                Regex = new Regex(@"^\r\n\+RECEIVE,([0-9]),([0-9]+):"),
+                RegexParametersGroup = 1,
+                RegexDataLengthGroup = 2,
             });
 
             #endregion
-        }
-
-        public override ATParserResult ParseResponse(string command, ATCommandType commandType, byte[] buffer, int index, int count)
-        {
-            ATFrameParser frameParser = (ATFrameParser)this.frameParsers[
-                this.GetFrameParserKey(command, commandType)];
-
-
-            if (frameParser == null)
-                return null;
-
-            return frameParser.Parse(buffer, index, count);
-        }
-
-        public override ATParserResult ParseUnsolicitedResponse(byte[] buffer, int index, int count)
-        {
-            ATParserResult parserResult;
-
-
-            foreach (ATFrameParser frameParser in this.unsolicitedFrameParsers)
-            {
-                parserResult = frameParser.Parse(buffer, index, count);
-
-                if (parserResult != null && parserResult.Success)
-                    return parserResult;
-            }
-
-            return null;
-        }
-
-        public override int IndexOfDelimitor(byte[] buffer, int index, int count, bool ignoreTruncated)
-        {
-            return IndexOfSequence(buffer, index, count, this.delimitorSequence, 0, this.delimitorSequence.Length, ignoreTruncated);
-        }
-
-
-        private string GetFrameParserKey(string command, ATCommandType commandType)
-        {
-            return String.Concat(commandType, "+", command);
-        }
-
-        protected void AddRegexFrameParser(string command, ATCommandType commandType, Regex regex, int regexParametersGroup, int regexResultGroup)
-        {
-            this.AddFrameParser(new RegexATFrameParser()
-            {
-                Command = command,
-                CommandType = commandType,
-                Regex = regex,
-                RegexParametersGroup = regexParametersGroup,
-                RegexResultGroup = regexResultGroup
-            });
-        }
-
-        protected void AddFrameParser(ATFrameParser frameParser)
-        {
-            this.frameParsers.Add(this.GetFrameParserKey(frameParser.Command, frameParser.CommandType), frameParser);
-        }
-
-        protected void AddUnsolicitedFrameParser(ATFrameParser frameParser)
-        {
-            this.unsolicitedFrameParsers.Add(frameParser);
         }
     }
 }

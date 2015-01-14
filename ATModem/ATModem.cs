@@ -12,19 +12,45 @@ namespace BrusDev.IO.Modems
 {
     public abstract class ATModem: IDisposable
     {
-        protected bool clientConnected;
+        enum ATConnectionMode
+        {
+            Client,
+            Server
+        }
 
-        private ATFrame dataFrame;
-        private long dataCount;
-        private long dataLength;
-        private bool dataDiscarded;
-        private object dataSyncRoot;
-        private AutoResetEvent dataReady;
+        class ATConnectionState
+        {
+            public bool ipConnectionOpened;
+            public bool ipConnectionPending;
+            public bool ipConnectionDataDiscarded;
+            public ATConnectionMode ipConnectionMode;
+            public AutoResetEvent ipConnectionDataReady;
 
 
-        public event ATModemEventHandler ClientConnected;
-        public event ATModemEventHandler ClientDisconnected;
+            public ATConnectionState()
+            {
+                this.ipConnectionOpened = false;
+                this.ipConnectionPending = false;
+                this.ipConnectionDataDiscarded = false;
+                this.ipConnectionMode = ATConnectionMode.Client;
+                this.ipConnectionDataReady = new AutoResetEvent(false);
+            }
+        }
 
+
+        private const int maximumConnections = 8;
+        private const int maximumEnableTests = 8;
+
+        private long ipConnectionId;
+        private long ipConnectionDataCount;
+        private long ipConnectionDataLength;
+        private ATFrame ipConnectionDataFrame;
+        private object ipConnectionSyncRoot;
+
+        private ATConnectionState[] ipConnectionState;
+
+        private int ipConnectionServerCount;
+        private AutoResetEvent ipConnectionServerReady;
 
         public string AccessPointName { get; set; }
         public string AccessUsername { get; set; }
@@ -33,137 +59,213 @@ namespace BrusDev.IO.Modems
 
         public ATModem()
         {
-            this.clientConnected = false;
-
-            this.dataFrame = null;
-            this.dataCount = 0;
-            this.dataLength = 0;
-            this.dataDiscarded = false;
-            this.dataSyncRoot = new object();
-            this.dataReady = new AutoResetEvent(false);
+            this.ipConnectionId = -1;
+            this.ipConnectionDataCount = 0;
+            this.ipConnectionDataLength = 0;
+            this.ipConnectionDataFrame = null;
+            this.ipConnectionSyncRoot = new object();
+            this.ipConnectionState = new ATConnectionState[maximumConnections];
+            for (int i = 0; i < maximumConnections; i++)
+                this.ipConnectionState[i] = new ATConnectionState();
+            
+            this.ipConnectionServerCount = 0;
+            this.ipConnectionServerReady = new AutoResetEvent(false);
         }
+
+        protected virtual void Initialize()
+        {
+            bool deviceEnabled = false;
+
+            //Attendo l'abilitazione del dispositivo.
+            for (int count = 0; count < maximumEnableTests; count++)
+            {
+                try
+                {
+                    this.Test();
+                    deviceEnabled = true;
+                    break;
+                }
+                catch
+                {
+                    Thread.Sleep(1000);
+                }
+            }
+
+            if(!deviceEnabled)
+                throw new ATModemException(ATModemError.Generic);
+        }
+
+        public abstract void Test();
 
         public abstract void Close();
 
         public abstract void SetDNSSettings(string primaryIPAddress, string secondaryIPAddress);
 
-        public abstract string QueryDNSIPAddress(string domaninName);
-        public abstract string QueryDNSIPAddress(string domainName, int timeout);
-
         public abstract void OpenDataConnection();
         public abstract string GetLocalIPAddress();
 
-        public abstract void ConnectIPClient(string mode, string ipAddress, int port);
-        public abstract void ConnectIPClient(string mode, string ipAddress, int port, int timeout);
+        public abstract int OpenIPConnection(string mode, string ipAddress, int port);
+        public abstract int OpenIPConnection(string mode, string ipAddress, int port, int timeout);
 
-        public abstract void SendData(byte[] buffer, int index, int count);
+        public virtual void SendData(int id, byte[] buffer, int index, int count)
+        {
+            this.SendData(id, buffer, index, count, Timeout.Infinite);
+        }
 
-        public abstract void SendData(byte[] buffer, int index, int count, int timeout);
+        public abstract void SendData(int id, byte[] buffer, int index, int count, int timeout);
 
-        public abstract void DisconnectIPClient();
+        public abstract void CloseIPConnection(int id);
 
         public abstract void CloseDataConnection();
 
-        public abstract string GetPinRequired();
+        public abstract string GetSerial();
 
-        public abstract string GetSignalQualityReport();
+        public abstract string GetIPConnectionStatus(int id);
 
-        public abstract string GetGsmNetworkRegistration();
+        public abstract void StartListening(int port);
 
-        public abstract string GetGprsNetworkRegistration();
+        public abstract void StopListening();
 
-        public abstract string GetGPRSServiceState();
-
-        public abstract string GetImei();
-
-        public abstract string GetConnectionStatus();
-
-        public virtual int ReceiveData(byte[] buffer, int index, int count)
+        public virtual int Accept()
         {
-            return this.ReceiveData(buffer, index, count, Timeout.Infinite);
+            ATConnectionState connectionState;
+
+            this.ipConnectionServerReady.WaitOne();
+
+            lock (this.ipConnectionSyncRoot)
+            {
+                for (int i = 0; i < maximumConnections; i++)
+                {
+                    connectionState = this.ipConnectionState[i];
+
+                    if (connectionState.ipConnectionMode == ATConnectionMode.Server &&
+                        connectionState.ipConnectionPending)
+                    {
+                        connectionState.ipConnectionPending = false;
+
+                        this.ipConnectionServerCount--;
+
+                        if(this.ipConnectionServerCount > 0)
+                            this.ipConnectionServerReady.Set();
+                        else
+                            this.ipConnectionServerReady.Reset();
+
+                        return i;
+                    }
+                }
+            }
+
+            throw new ATModemException(ATModemError.Generic);
         }
 
-        public virtual int ReceiveData(byte[] buffer, int index, int count, int timeout)
+        public virtual int ReceiveData(int id, byte[] buffer, int index, int count)
         {
-            if (!this.dataReady.WaitOne(timeout, true))
+            return this.ReceiveData(id, buffer, index, count, Timeout.Infinite);
+        }
+
+        public virtual int ReceiveData(int id, byte[] buffer, int index, int count, int timeout)
+        {
+            ATConnectionState connectionState = this.ipConnectionState[id];
+
+            if (!connectionState.ipConnectionDataReady.WaitOne(timeout, true))
                 throw new ATModemException(ATModemError.Timeout);
 
-            lock (this.dataSyncRoot)
+            lock (this.ipConnectionSyncRoot)
             {
-                if (!this.clientConnected || this.dataDiscarded)
+                if (!connectionState.ipConnectionOpened || connectionState.ipConnectionDataDiscarded)
                 {
-                    this.dataReady.Set();
+                    connectionState.ipConnectionDataReady.Set();
 
                     return 0;
                 }
 
-                count = dataFrame.DataStream.Read(buffer, index, count);
+                count = ipConnectionDataFrame.DataStream.Read(buffer, index, count);
 
                 //Verifico se sono andati persi dei dati della frame.
-                if (count == 0 && this.dataCount < this.dataLength)
+                if (count == 0 && this.ipConnectionDataCount < this.ipConnectionDataLength)
                 {
-                    this.dataDiscarded = true;
+                    connectionState.ipConnectionDataDiscarded = true;
                 }
 
-                this.dataCount += count;
+                this.ipConnectionDataCount += count;
 
                 //Verifico se la lettura dei dati della frame è incompleta.
-                if (this.dataCount < this.dataLength)
+                if (this.ipConnectionDataCount < this.ipConnectionDataLength)
                 {
-                    this.dataReady.Set();
+                    connectionState.ipConnectionDataReady.Set();
                 }
 
                 return count;
             }
         }
 
-        protected void SetDataFrame(ATFrame frame)
+        protected int GetConnectionId()
         {
-            lock (this.dataSyncRoot)
+            for (int i = 0; i < maximumConnections; i++)
+                if (!this.ipConnectionState[i].ipConnectionOpened)
+                    return i;
+
+            throw new IndexOutOfRangeException();
+        }
+
+        protected void SetDataFrame(int id, ATFrame frame)
+        {
+            ATConnectionState connectionState = this.ipConnectionState[id];
+
+            lock (this.ipConnectionSyncRoot)
             {
-                if (this.dataCount < this.dataLength)
+                if (this.ipConnectionDataCount < this.ipConnectionDataLength)
                 {
-                    this.dataDiscarded = true;
-                    this.dataFrame = null;
-                }
-                else
-                {
-                    this.dataFrame = frame;
-                    this.dataCount = 0;
-                    this.dataLength = frame.DataStream.Length;
+                    ATConnectionState previousConnectionState = this.ipConnectionState[this.ipConnectionId];
+
+                    //La connessione con ipConnectionId ha perso dei dati in ricezione.
+                    previousConnectionState.ipConnectionDataDiscarded = true;
+                    previousConnectionState.ipConnectionDataReady.Set();
                 }
 
-                this.dataReady.Set();
+                if (connectionState.ipConnectionOpened && !connectionState.ipConnectionDataDiscarded)
+                {
+                    this.ipConnectionDataCount = 0;
+                    this.ipConnectionDataLength = frame.DataStream.Length;
+                    this.ipConnectionDataFrame = frame;
+
+                    connectionState.ipConnectionDataReady.Set();
+                }
             }
         }
 
-        protected void OnClientConnected(EventArgs e)
+        protected void OnIPConnectionOpened(int id, bool remote)
         {
-            lock (this.dataSyncRoot)
+            ATConnectionState connectionState = this.ipConnectionState[id];
+
+
+            lock (this.ipConnectionSyncRoot)
             {
-                this.clientConnected = true;
+                connectionState.ipConnectionOpened = true;
+                connectionState.ipConnectionPending = true;
+                connectionState.ipConnectionDataDiscarded = false;
+                connectionState.ipConnectionMode = ATConnectionMode.Client;
+                connectionState.ipConnectionDataReady.Reset();
 
-                this.dataCount = 0;
-                this.dataLength = 0;
-                this.dataDiscarded = false;
-                this.dataFrame = null;
-                this.dataReady.Reset();
+                if (remote)
+                {
+                    connectionState.ipConnectionMode = ATConnectionMode.Server;
 
-                if (this.ClientConnected != null)
-                    this.ClientConnected(this, EventArgs.Empty);
+                    this.ipConnectionServerCount++;
+                    this.ipConnectionServerReady.Set();
+                }
             }
         }
 
-        protected void OnClientDisconnected(EventArgs e)
+        protected void OnIPConnectionClosed(int id)
         {
-            lock (this.dataSyncRoot)
+            ATConnectionState connectionState = this.ipConnectionState[id];
+
+
+            lock (this.ipConnectionSyncRoot)
             {
-                this.clientConnected = false;
-
-                this.dataReady.Set();
-
-                if (this.ClientDisconnected != null)
-                    this.ClientDisconnected(this, EventArgs.Empty);
+                connectionState.ipConnectionOpened = false;
+                connectionState.ipConnectionDataReady.Set();
             }
         }
 
@@ -175,10 +277,5 @@ namespace BrusDev.IO.Modems
         }
 
         protected abstract void Dispose(bool disposing);
-
-        ~ATModem()
-        {
-            Dispose(false);
-        }
     }
 }

@@ -15,7 +15,8 @@ namespace BrusDev.IO.Modems
     public class ATProtocol: IDisposable
     {
         private const int defaultDataTimeout = 500;
-        private const int defaultProcessTimeout = 5000;
+        private const int defaultEchoTimeout = 3000;
+        private const int defaultProcessTimeout = 3000;
         private const int receivingBufferSize = 128;
         private const int sendingBufferSize = 128;
         private const byte byte_CarriageReturn = (byte)'\r';
@@ -23,6 +24,8 @@ namespace BrusDev.IO.Modems
 
         private bool closed;
         private bool disposed = false;
+        private bool echoEnabled;
+        private object syncRoot;
 
         private ATParser parser;
         private ATParserResult parserResult;
@@ -37,10 +40,7 @@ namespace BrusDev.IO.Modems
         private int frameIndex;
         private int frameLength;
         private int readDataLength;
-        private object dataSyncRoot;
         private ATResponseDataStream dataStream;
-        private ManualResetEvent dataReadEvent;
-        private ManualResetEvent dataReadyEvent;
 
         private byte[] receivingBuffer;
         private int receivingBufferIndex;
@@ -49,18 +49,26 @@ namespace BrusDev.IO.Modems
 
         private int sendingLength;
         private byte[] sendingBuffer;
-        private DateTime lastSendDateTime;
-        private object processFrameLock;
 
+        private bool waitingEcho;
         private bool waitingResponse;
-        private object waitingResponseLock;
+        private object waitingLock;
         private ATFrame waitingFrame;
-        private string waitingResponseCommand;
-        private ATCommandType waitingResponseCommandType;
+        private string waitingCommand;
+        private ATCommandType waitingCommandType;
+        private AutoResetEvent waitingEchoEvent;
         private AutoResetEvent waitingResponseEvent;
 
 
+        public object SyncRoot { get { return this.syncRoot; } }
+
+        public bool EchoEnabled { get { return this.echoEnabled; } set { this.echoEnabled = value; } }
+
+
         public event ATModemFrameEventHandler FrameReceived;
+
+
+        #region DataStreams...
 
         class ATRequestDataStream : System.IO.Stream
         {
@@ -134,7 +142,10 @@ namespace BrusDev.IO.Modems
 
             public override void Write(byte[] buffer, int offset, int count)
             {
-                this.protocol.Write(buffer, offset, count);
+                lock (this.protocol.syncRoot)
+                {
+                    this.protocol.stream.Write(buffer, offset, count);
+                }
             }
         }
 
@@ -363,6 +374,7 @@ namespace BrusDev.IO.Modems
             }
         }
 
+        #endregion
 
         public ATProtocol(Stream stream, ATParser parser)
         {
@@ -372,20 +384,17 @@ namespace BrusDev.IO.Modems
             this.parserResult = null;
 
             this.closed = false;
-
-            this.lastSendDateTime = DateTime.Now;
+            this.syncRoot = new object();
+            this.echoEnabled = true;
 
             this.sendingLength = 0;
             this.sendingBuffer = new byte[sendingBufferSize];
-            this.processFrameLock = new object();
 
-            this.waitingResponseLock = new object();
+            this.waitingLock = new object();
+            this.waitingEchoEvent = new AutoResetEvent(false);
             this.waitingResponseEvent = new AutoResetEvent(false);
 
             this.readDataLength = 0;
-            this.dataSyncRoot = new object();
-            this.dataReadEvent = new ManualResetEvent(false);
-            this.dataReadyEvent = new ManualResetEvent(false);
 
             this.receivingBuffer = new byte[receivingBufferSize];
             this.receivingThread = new Thread(this.ReceiverThreadRun);
@@ -404,53 +413,46 @@ namespace BrusDev.IO.Modems
             return ATFrame.GetInstance(command, commandType, ATRequestDataStream.GetInstance(this), inParameters);
         }
 
-        private void Write(byte[] buffer, int index, int count)
-        {
-            this.stream.Write(buffer, index, count);
-
-#if (DEBUG)
-            Debug.Print("WriteData data > ");
-            Debug.Print(new string(ATParser.Bytes2Chars(buffer, index, count)));
-#endif
-        }
-
-        public void Send(ATFrame frame)
-        {
-            lock (this.sendingBuffer)
-            {
-                this.sendingLength = frame.GetBytes(this.sendingBuffer, 0);
-
-                this.stream.Write(this.sendingBuffer, 0, this.sendingLength);
-
-#if (DEBUG)
-                Debug.Print("Sent frame > ");
-                Debug.Print(new string(ATParser.Bytes2Chars(this.sendingBuffer, 0, this.sendingLength)));
-#endif
-
-                this.lastSendDateTime = DateTime.Now;
-            }
-
-        }
-
         public ATFrame Process(ATFrame frame)
         {
-            return this.Process(frame, defaultProcessTimeout);
+            return this.Process(frame, true, defaultProcessTimeout);
         }
 
-        public ATFrame Process(ATFrame frame, int timeout)
+        public ATFrame Process(ATFrame frame, bool waitResponse)
         {
-            lock (this.processFrameLock)
+            return this.Process(frame, waitResponse, defaultProcessTimeout);
+        }
+
+        public ATFrame Process(ATFrame frame, bool waitResponse, int timeout)
+        {
+            lock (this.syncRoot)
             {
-                lock (this.waitingResponseLock)
+                lock (this.waitingLock)
                 {
-                    this.waitingResponse = true;
-                    this.waitingResponseCommand = frame.Command;
-                    this.waitingResponseCommandType = frame.CommandType;
+                    this.waitingEcho = this.echoEnabled;
+                    this.waitingResponse = waitResponse;
+                    this.waitingCommand = frame.Command;
+                    this.waitingCommandType = frame.CommandType;
                 }
 
                 try
                 {
-                    this.Send(frame);
+                    this.sendingLength = frame.GetBytes(this.sendingBuffer, 0);
+
+                    this.stream.Write(this.sendingBuffer, 0, this.sendingLength);
+
+#if (DEBUG)
+                    Debug.Print("Sent frame > ");
+                    Debug.Print(new string(ATParser.Bytes2Chars(this.sendingBuffer, 0, this.sendingLength)));
+#endif
+
+
+                    if (this.waitingEcho && !this.waitingEchoEvent.WaitOne(defaultEchoTimeout, true))
+                        throw new ATModemException(ATModemError.Timeout);
+
+
+                    if (!this.waitingResponse)
+                        return null;
 
                     if (this.waitingResponseEvent.WaitOne(timeout, true))
                     {
@@ -461,8 +463,9 @@ namespace BrusDev.IO.Modems
                 }
                 finally
                 {
-                    lock (this.waitingResponseLock)
+                    lock (this.waitingLock)
                     {
+                        this.waitingEcho = false;
                         this.waitingResponse = false;
                     }
                 }
@@ -490,41 +493,47 @@ namespace BrusDev.IO.Modems
 
 #if (DEBUG)
                         Debug.Print("ReadBuffer > " + readBytes);
-                        //Debug.Print(new string(ATParser.Bytes2Chars(this.receivingBuffer, this.receivingBufferIndex, this.receivingBufferCount)));
+                        Debug.Print(new string(ATParser.Bytes2Chars(this.receivingBuffer, this.receivingBufferIndex, this.receivingBufferCount)));
 #endif
                         while (this.receivingBufferCount > 0)
                         {
-                            //Cerco il primo delimitatore.
-                            firstDelimiterIndex = this.parser.IndexOfDelimitor(this.receivingBuffer,
-                                this.receivingBufferIndex, this.receivingBufferCount, false);
-
-                            //Verifico se ho trovato il delimitatore.
-                            if (firstDelimiterIndex == -1)
+                            lock (this.waitingLock)
                             {
-                                //Cancello il contenuto del buffer.
-                                this.receivingBufferIndex = 0;
-                                this.receivingBufferCount = 0;
+                                //Verifico se sono in attesa del comando inviato.
+                                if (this.waitingEcho)
+                                {
+                                    //Cerco il comando inviato.
+                                    this.frameIndex = ATParser.IndexOfSequence(this.receivingBuffer, this.receivingBufferIndex, this.receivingBufferCount, this.sendingBuffer, 0, this.sendingLength, true);
 
-                                break;
-                            }
-                            else if (firstDelimiterIndex > this.receivingBufferIndex)
-                            {
-                                //Cancello il contenuto del buffer fino al primo delimitatore.
-                                this.receivingBufferCount -= (firstDelimiterIndex - this.receivingBufferIndex);
-                                this.receivingBufferIndex = firstDelimiterIndex;
-                            }
+                                    //Verifico se ho trovato il comando inviato.
+                                    if (this.frameIndex != -1)
+                                    {
+                                        this.waitingEcho = false;
+                                        this.waitingEchoEvent.Set();
 
+                                        //Cancello il contenuto del buffer relativo alla risposta e ai dati.
+                                        movingBytes = this.receivingBufferIndex + this.receivingBufferCount -
+                                            this.frameIndex - this.sendingLength;
 
-                            if (this.receivingBufferCount > 0)
-                            {
-                                lock (this.waitingResponseLock)
+                                        if (movingBytes > 0)
+                                        {
+                                            Array.Copy(this.receivingBuffer, this.receivingBufferIndex + this.receivingBufferCount -
+                                                movingBytes, this.receivingBuffer, this.frameIndex, movingBytes);
+                                        }
+
+                                        this.receivingBufferCount -= this.sendingLength;
+                                    }
+
+                                    break;
+                                }
+                                else
                                 {
                                     //Verifico se sono in attesa di una risposta.
                                     if (this.waitingResponse)
                                     {
                                         //Eseguo il parse della risposta attesa.
-                                        this.parserResult = this.parser.ParseResponse(this.waitingResponseCommand,
-                                            this.waitingResponseCommandType, this.receivingBuffer,
+                                        this.parserResult = this.parser.ParseResponse(this.waitingCommand,
+                                            this.waitingCommandType, this.receivingBuffer,
                                             this.receivingBufferIndex, this.receivingBufferCount);
 
                                         if (this.parserResult != null && parserResult.Success)
@@ -556,6 +565,30 @@ namespace BrusDev.IO.Modems
                                     }
                                     else
                                     {
+                                        //Cerco il primo delimitatore.
+                                        firstDelimiterIndex = this.parser.IndexOfDelimitor(this.receivingBuffer,
+                                            this.receivingBufferIndex, this.receivingBufferCount, false);
+
+                                        //Verifico se ho trovato il delimitatore.
+                                        if (firstDelimiterIndex == -1)
+                                        {
+                                            //Cancello il contenuto del buffer.
+                                            this.receivingBufferIndex = 0;
+                                            this.receivingBufferCount = 0;
+
+                                            break;
+                                        }
+                                        else if (firstDelimiterIndex > this.receivingBufferIndex)
+                                        {
+                                            //Cancello il contenuto del buffer fino al primo delimitatore.
+                                            this.receivingBufferCount -= (firstDelimiterIndex - this.receivingBufferIndex);
+                                            this.receivingBufferIndex = firstDelimiterIndex;
+
+                                            if (this.receivingBufferCount == 0)
+                                                break;
+                                        }
+
+
                                         //Eseguo il parse della risposta non attesa.
                                         this.parserResult = this.parser.ParseUnsolicitedResponse(this.receivingBuffer,
                                             this.receivingBufferIndex, this.receivingBufferCount);
@@ -592,106 +625,110 @@ namespace BrusDev.IO.Modems
                                                 this.receivingBufferIndex = 0;
                                                 this.receivingBufferCount = 0;
                                             }
-
-                                            break;
-                                        }
-                                    }
-                                }
-
-
-                                this.frameIndex = this.parserResult.Index;
-                                this.frameLength = this.parserResult.Length;
-
-                                if (this.dataLength > 0)
-                                {
-                                    this.dataIndex = this.frameIndex + this.frameLength;
-                                    this.dataCount = 0;
-
-                                    this.readDataLength = this.receivingBufferIndex + this.receivingBufferCount - this.dataIndex;
-
-                                    if (this.readDataLength > this.dataLength)
-                                        this.readDataLength = this.dataLength;
-
-                                    if (this.readDataLength > 0)
-                                    {
-                                        this.dataCount += this.readDataLength;
-#if (DEBUG)
-                                        Debug.Print("ReadData > " + this.readDataLength + "/" + this.dataCount);
-                                        //Debug.Print(new string(ATParser.Bytes2Chars(this.receivingBuffer, this.dataIndex, this.readDataLength)));
-#endif
-
-                                        this.dataStream.WriteBuffer(this.receivingBuffer, this.dataIndex, this.readDataLength);
-
-                                        this.receivingBufferCount -= this.readDataLength;
-                                        this.readDataLength = 0;
-                                    }
-
-                                    //Check if read bytes from the serial port.
-                                    if (this.dataCount < this.dataLength)
-                                    {
-                                        while (this.dataCount < this.dataLength)
-                                        {
-                                            this.dataTicks = Environment.TickCount;
-
-                                            readBytes = this.stream.Read(this.receivingBuffer, this.frameIndex, receivingBufferSize - this.frameIndex);
-
-                                            this.dataTime = Environment.TickCount - this.dataTicks;
-
-#if (DEBUG)
-                                            Debug.Print("ReadDataBuffer > " + readBytes + "/" + this.dataTime);
-                                            //Debug.Print(new string(ATParser.Bytes2Chars(this.receivingBuffer, this.frameIndex, readBytes)));
-#endif
-
-                                            lock (this.waitingResponseLock)
+                                            else if (firstDelimiterIndex == this.receivingBufferIndex)
                                             {
-                                                //Verifico se sono in attesa di una risposta o se è scaduto il data timeout.
-                                                if (this.waitingResponse || this.dataTime > defaultDataTimeout)
-                                                {
-                                                    this.dataStream.Close();
-
-                                                    this.readDataLength = 0;
-
-                                                    break;
-                                                }
+                                                //Forso il caricamento del buffer per evitare cicli infiniti.
+                                                break;
                                             }
 
-                                            this.readDataLength = this.dataLength - this.dataCount;
-
-                                            if (readBytes < this.readDataLength)
-                                                this.readDataLength = readBytes;
-
-                                            this.dataCount += this.readDataLength;
-
-#if (DEBUG)
-                                            Debug.Print("ReadData > " + this.readDataLength + "/" + this.dataCount);
-                                            //Debug.Print(new string(ATParser.Bytes2Chars(this.receivingBuffer, this.frameIndex, this.readDataLength)));
-#endif
-
-                                            this.dataStream.WriteBuffer(this.receivingBuffer, this.frameIndex, this.readDataLength);
+                                            continue;
                                         }
-
-                                        this.receivingBufferCount += (readBytes - this.frameLength);
-                                        this.readDataLength -= this.frameLength;
                                     }
                                 }
-                                else
+                            }
+
+                            this.frameIndex = this.parserResult.Index;
+                            this.frameLength = this.parserResult.Length;
+
+                            if (this.dataLength > 0)
+                            {
+                                this.dataIndex = this.frameIndex + this.frameLength;
+                                this.dataCount = 0;
+
+                                this.readDataLength = this.receivingBufferIndex + this.receivingBufferCount - this.dataIndex;
+
+                                if (this.readDataLength > this.dataLength)
+                                    this.readDataLength = this.dataLength;
+
+                                if (this.readDataLength > 0)
                                 {
+                                    this.dataCount += this.readDataLength;
+#if (DEBUG)
+                                    Debug.Print("ReadData > " + this.readDataLength + "/" + this.dataCount);
+                                    //Debug.Print(new string(ATParser.Bytes2Chars(this.receivingBuffer, this.dataIndex, this.readDataLength)));
+#endif
+
+                                    this.dataStream.WriteBuffer(this.receivingBuffer, this.dataIndex, this.readDataLength);
+
+                                    this.receivingBufferCount -= this.readDataLength;
                                     this.readDataLength = 0;
                                 }
 
-
-                                //Cancello il contenuto del buffer relativo alla risposta e ai dati.
-                                movingBytes = this.receivingBufferIndex + this.receivingBufferCount -
-                                    this.frameIndex - this.frameLength - this.readDataLength;
-
-                                if (movingBytes > 0)
+                                //Check if read bytes from the serial port.
+                                if (this.dataCount < this.dataLength)
                                 {
-                                    Array.Copy(this.receivingBuffer, this.receivingBufferIndex + this.receivingBufferCount -
-                                        movingBytes, this.receivingBuffer, this.frameIndex, movingBytes);
-                                }
+                                    while (this.dataCount < this.dataLength)
+                                    {
+                                        this.dataTicks = Environment.TickCount;
 
-                                this.receivingBufferCount -= (this.frameLength + this.readDataLength);
+                                        readBytes = this.stream.Read(this.receivingBuffer, this.frameIndex, receivingBufferSize - this.frameIndex);
+
+                                        this.dataTime = Environment.TickCount - this.dataTicks;
+
+#if (DEBUG)
+                                        Debug.Print("ReadDataBuffer > " + readBytes + "/" + this.dataTime);
+                                        //Debug.Print(new string(ATParser.Bytes2Chars(this.receivingBuffer, this.frameIndex, readBytes)));
+#endif
+
+                                        lock (this.waitingLock)
+                                        {
+                                            //Verifico se sono in attesa di una risposta o se è scaduto il data timeout.
+                                            if (this.waitingResponse || this.dataTime > defaultDataTimeout)
+                                            {
+                                                this.dataStream.Close();
+
+                                                this.readDataLength = 0;
+
+                                                break;
+                                            }
+                                        }
+
+                                        this.readDataLength = this.dataLength - this.dataCount;
+
+                                        if (readBytes < this.readDataLength)
+                                            this.readDataLength = readBytes;
+
+                                        this.dataCount += this.readDataLength;
+
+#if (DEBUG)
+                                        Debug.Print("ReadData > " + this.readDataLength + "/" + this.dataCount);
+                                        //Debug.Print(new string(ATParser.Bytes2Chars(this.receivingBuffer, this.frameIndex, this.readDataLength)));
+#endif
+
+                                        this.dataStream.WriteBuffer(this.receivingBuffer, this.frameIndex, this.readDataLength);
+                                    }
+
+                                    this.receivingBufferCount += (readBytes - this.frameLength);
+                                    this.readDataLength -= this.frameLength;
+                                }
                             }
+                            else
+                            {
+                                this.readDataLength = 0;
+                            }
+
+
+                            //Cancello il contenuto del buffer relativo alla risposta e ai dati.
+                            movingBytes = this.receivingBufferIndex + this.receivingBufferCount -
+                                this.frameIndex - this.frameLength - this.readDataLength;
+
+                            if (movingBytes > 0)
+                            {
+                                Array.Copy(this.receivingBuffer, this.receivingBufferIndex + this.receivingBufferCount -
+                                    movingBytes, this.receivingBuffer, this.frameIndex, movingBytes);
+                            }
+
+                            this.receivingBufferCount -= (this.frameLength + this.readDataLength);
                         }
 
                         //Verifico lo stato del buffer.
@@ -739,11 +776,6 @@ namespace BrusDev.IO.Modems
 
                 disposed = true;
             }
-        }
-
-        ~ATProtocol()
-        {
-            Dispose(false);
         }
     }
 }

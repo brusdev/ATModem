@@ -4,15 +4,16 @@
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProjectGuid>{6C2BAB53-C0DC-41F7-AF83-A4AB43B20E8C}</ProjectGuid>
-    <OutputType>Library</OutputType>
+    <ProjectGuid>{47040C7D-9014-4BA7-B9CC-E7308A5CE58B}</ProjectGuid>
+    <OutputType>Exe</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>BrusDev.IO.Modems</RootNamespace>
-    <AssemblyName>ATModem</AssemblyName>
+    <RootNamespace>Tester.ESP8266</RootNamespace>
+    <AssemblyName>Tester.ESP8266</AssemblyName>
     <TargetFrameworkVersion>v2.0</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <PlatformTarget>AnyCPU</PlatformTarget>
     <DebugSymbols>true</DebugSymbols>
     <DebugType>full</DebugType>
     <Optimize>false</Optimize>
@@ -22,6 +23,7 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <PlatformTarget>AnyCPU</PlatformTarget>
     <DebugType>pdbonly</DebugType>
     <Optimize>true</Optimize>
     <OutputPath>bin\Release\</OutputPath>
@@ -35,30 +37,14 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="ATModemError.cs" />
-    <Compile Include="ATModemEventHandler.cs" />
-    <Compile Include="ATModemException.cs" />
-    <Compile Include="ATModemFrameEventArgs.cs" />
-    <Compile Include="ATModemFrameEventHandler.cs" />
-    <Compile Include="ESP8266ATModem.cs" />
-    <Compile Include="Frames\ATCommand.cs" />
-    <Compile Include="Frames\ATCommandType.cs" />
-    <Compile Include="Frames\ATFrame.cs" />
-    <Compile Include="ATModem.cs" />
-    <Compile Include="Parsers\ATFrameParser.cs" />
-    <Compile Include="Parsers\ATParser.cs" />
-    <Compile Include="Parsers\ATParserResult.cs" />
-    <Compile Include="Parsers\ESP8266ATParser.cs" />
-    <Compile Include="Parsers\ListATParser.cs" />
-    <Compile Include="Parsers\RegexATFrameParser.cs" />
-    <Compile Include="Parsers\RegulaExpressions\Capture.cs" />
-    <Compile Include="Parsers\RegulaExpressions\Group.cs" />
-    <Compile Include="Parsers\RegulaExpressions\Match.cs" />
-    <Compile Include="Parsers\RegulaExpressions\Regex.cs" />
-    <Compile Include="Parsers\SIM900ATParser.cs" />
+    <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="ATProtocol.cs" />
-    <Compile Include="SIM900ATModem.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ATModem\ATModem.csproj">
+      <Project>{6c2bab53-c0dc-41f7-af83-a4ab43b20e8c}</Project>
+      <Name>ATModem</Name>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 

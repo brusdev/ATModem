@@ -3,7 +3,9 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio 2012
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ATModem", "ATModem\ATModem.csproj", "{6C2BAB53-C0DC-41F7-AF83-A4AB43B20E8C}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tester", "Tester\Tester.csproj", "{0A8D49C7-B3DA-43A6-BE7D-21ED71D4B45A}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tester.SIM900", "Tester.SIM900\Tester.SIM900.csproj", "{0A8D49C7-B3DA-43A6-BE7D-21ED71D4B45A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tester.ESP8266", "Tester.ESP8266\Tester.ESP8266.csproj", "{47040C7D-9014-4BA7-B9CC-E7308A5CE58B}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -19,6 +21,10 @@ Global
 		{0A8D49C7-B3DA-43A6-BE7D-21ED71D4B45A}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{0A8D49C7-B3DA-43A6-BE7D-21ED71D4B45A}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{0A8D49C7-B3DA-43A6-BE7D-21ED71D4B45A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{47040C7D-9014-4BA7-B9CC-E7308A5CE58B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{47040C7D-9014-4BA7-B9CC-E7308A5CE58B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{47040C7D-9014-4BA7-B9CC-E7308A5CE58B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{47040C7D-9014-4BA7-B9CC-E7308A5CE58B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

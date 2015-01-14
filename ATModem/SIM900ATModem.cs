@@ -17,7 +17,11 @@ namespace BrusDev.IO.Modems
 
         private ATProtocol protocol;
 
+        private int openingConnectionId;
+        private int sendingConnectionId;
+        private int closingConnectionId;
         private ManualResetEvent connectionEvent;
+        private object connectionSyncRoot;
 
         private string dnsQueryParameters;
         private ManualResetEvent dnsQueryEvent;
@@ -27,14 +31,15 @@ namespace BrusDev.IO.Modems
 
         private ManualResetEvent sendPromptEvent;
 
-        private object connectionSyncRoot;
-
 
         public SIM900ATModem(Stream stream)
         {
             this.protocol = new ATProtocol(stream, SIM900ATParser.GetInstance());
+            this.protocol.EchoEnabled = false;
             this.protocol.FrameReceived += protocol_FrameReceived;
 
+            this.openingConnectionId = -1;
+            this.sendingConnectionId = -1;
             this.connectionEvent = new ManualResetEvent(false);
             this.dnsQueryEvent = new ManualResetEvent(false);
             this.sendEvent = new ManualResetEvent(false);
@@ -51,7 +56,10 @@ namespace BrusDev.IO.Modems
 
             if (responseFrame.Command == ATCommand.CONNECT)
             {
-                this.connectionEvent.Set();
+                if (Convert.ToInt32(responseFrame.OutParameters) == this.openingConnectionId)
+                {
+                    this.connectionEvent.Set();
+                }
             }
             else if (responseFrame.Command == ATCommand.CDNSGIP)
             {
@@ -60,14 +68,17 @@ namespace BrusDev.IO.Modems
             }
             else if (responseFrame.Command == ATCommand.SEND)
             {
-                this.sendResult = responseFrame.Result;
-                this.sendEvent.Set();
+                if (Convert.ToInt32(responseFrame.OutParameters) == this.sendingConnectionId)
+                {
+                    this.sendResult = responseFrame.Result;
+                    this.sendEvent.Set();
+                }
             }
             else if (responseFrame.Command == ATCommand.CLOSED)
             {
                 lock (connectionSyncRoot)
                 {
-                    this.OnClientDisconnected(EventArgs.Empty);
+                    this.OnIPConnectionClosed(Convert.ToInt32(responseFrame.OutParameters));
                 }
             }
             else if (responseFrame.Command == ATCommand.NORMAL_POWER_DOWN)
@@ -80,26 +91,32 @@ namespace BrusDev.IO.Modems
             }
             else if (responseFrame.Command == ATCommand.IPD)
             {
-                this.SetDataFrame(responseFrame);
+                this.SetDataFrame(0, responseFrame);
+            }
+            else if (responseFrame.Command == ATCommand.REMOTE_IP)
+            {
+                this.OnIPConnectionOpened(Convert.ToInt32(responseFrame.OutParameters), true);
+            }
+            else if (responseFrame.Command == ATCommand.RECEIVE)
+            {
+                this.SetDataFrame(Convert.ToInt32(responseFrame.OutParameters), responseFrame);
             }
         }
 
 
-        private void Initialize()
+        protected override void Initialize()
         {
+            base.Initialize();
+
             //Disabilito l'echo dei comandi perchè inficia sulle prestazioni.
             this.SetEchoMode(false);
 
             //Disabilito eventuali connessioni precedenti.
             this.CloseDataConnection();
 
-            //Disabilito la modalità di connessione trasparente perchè altrimenti il parser
-            // non gestisce correttamente le frame di invio e ricezione dati.
-            this.SetConnectionMode(false);
-
             //Disabilito la gestione delle connessioni multiple perchè al momento non è gestito.
             // In futuro si potrebbe gestire la modalità multiconnessione.
-            this.StartUpMultiIPConnection(false);
+            this.StartUpMultiIPConnection(true);
 
             //Disabilito la visualizzazione del prompt quando la richiesta di invio riesce
             // perchè al momento non è gestito.
@@ -108,6 +125,17 @@ namespace BrusDev.IO.Modems
             //Aggiungo l'intestazione per i pacchetti IP ricevuti perchè altrimenti il parser
             // non riconosce correttamente le frame di ricezione dei dati.
             this.AddIPHead(true);
+        }
+
+        public override void Test()
+        {
+            ATFrame responseFrame = null;
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT, ATCommandType.Execution, null);
+
+            responseFrame = (ATFrame)this.protocol.Process(requestFrame);
+
+            if (responseFrame.Result != "OK")
+                throw new ATModemException(ATModemError.Generic);
         }
 
         public override void Close()
@@ -246,21 +274,24 @@ namespace BrusDev.IO.Modems
                 throw new ATModemException(ATModemError.Generic);
         }
 
-        public override void ConnectIPClient(string mode, string ipAddress, int port)
+        public override int OpenIPConnection(string mode, string ipAddress, int port)
         {
-            this.ConnectIPClient(mode, ipAddress, port, Timeout.Infinite);
+            return this.OpenIPConnection(mode, ipAddress, port, Timeout.Infinite);
         }
 
-        public override void ConnectIPClient(string mode, string ipAddress, int port, int timeout)
+        public override int OpenIPConnection(string mode, string ipAddress, int port, int timeout)
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPSTART, ATCommandType.Write,
-                String.Concat("\"", mode, "\",\"", ipAddress, "\",", port.ToString()));
+            ATFrame requestFrame;
 
             this.connectionEvent.Reset();
 
             lock (connectionSyncRoot)
             {
+                this.openingConnectionId = GetConnectionId();
+
+                requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPSTART, ATCommandType.Write,
+                    String.Concat(this.openingConnectionId, ",\"", mode, "\",\"", ipAddress, "\",", port.ToString()));
                 responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 
                 if (responseFrame.Result != "OK")
@@ -269,16 +300,18 @@ namespace BrusDev.IO.Modems
                 if (!this.connectionEvent.WaitOne(timeout, true))
                     throw new ATModemException(ATModemError.Timeout);
 
-                this.OnClientConnected(EventArgs.Empty);
+                this.OnIPConnectionOpened(0, false);
             }
+
+            return 0;
         }
 
-        public override string QueryDNSIPAddress(string domainName)
+        public string QueryDNSIPAddress(string domainName)
         {
             return this.QueryDNSIPAddress(domainName, Timeout.Infinite);
         }
 
-        public override string QueryDNSIPAddress(string domainName, int timeout)
+        public string QueryDNSIPAddress(string domainName, int timeout)
         {
             ATFrame responseFrame;
             ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CDNSGIP, ATCommandType.Write,
@@ -315,21 +348,22 @@ namespace BrusDev.IO.Modems
             return dnsParametersTokens[2].Trim('"');
         }
 
-        public override void SendData(byte[] buffer, int index, int count)
+        public override void SendData(int id, byte[] buffer, int index, int count, int timeout)
         {
-            this.SendData(buffer, index, count, Timeout.Infinite);
-        }
+            ATFrame requestFrame;
 
-        public override void SendData(byte[] buffer, int index, int count, int timeout)
-        {
-            lock (this.protocol)
+
+            lock (this.protocol.SyncRoot)
             {
-                ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPSEND, ATCommandType.Execution, null);
+                this.sendingConnectionId = id;
+
+                requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPSEND, ATCommandType.Write, this.sendingConnectionId.ToString());
+
 
                 this.sendEvent.Reset();
                 this.sendPromptEvent.Reset();
 
-                this.protocol.Send(requestFrame);
+                this.protocol.Process(requestFrame, false);
 
                 if (!this.sendPromptEvent.WaitOne(timeout, true))
                     throw new ATModemException(ATModemError.Timeout);
@@ -346,30 +380,31 @@ namespace BrusDev.IO.Modems
             }
         }
 
-        public override void DisconnectIPClient()
+        public override void CloseIPConnection(int id)
         {
             lock (this.connectionSyncRoot)
             {
-                if (this.clientConnected)
+                ATFrame responseFrame;
+                ATFrame requestFrame;
+
+                this.closingConnectionId = id;
+
+                requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPCLOSE, ATCommandType.Write, this.closingConnectionId.ToString());
+
+                try
                 {
-                    ATFrame responseFrame;
-                    ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPCLOSE, ATCommandType.Execution, null);
+                    responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 
-                    try
-                    {
-                        responseFrame = (ATFrame)this.protocol.Process(requestFrame);
-
-                        if (responseFrame.Result == "ERROR")
-                            throw new ATModemException(ATModemError.Generic);
-                    }
-                    catch (ATModemException)
-                    {
-                        if (this.GetConnectionStatus().IndexOf("CLOSED") == -1)
-                            throw new ATModemException(ATModemError.Generic);
-                    }
-
-                    this.OnClientDisconnected(EventArgs.Empty);
+                    if (responseFrame.Result == "ERROR")
+                        throw new ATModemException(ATModemError.Generic);
                 }
+                catch (ATModemException)
+                {
+                    if (this.GetIPConnectionStatus(id).IndexOf("CLOSED") == -1)
+                        throw new ATModemException(ATModemError.Generic);
+                }
+
+                this.OnIPConnectionClosed(id);
             }
         }
 
@@ -384,7 +419,7 @@ namespace BrusDev.IO.Modems
                 throw new ATModemException(ATModemError.Generic);
         }
 
-        public override string GetPinRequired()
+        public string GetPinRequired()
         {
             ATFrame responseFrame;
             ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CPIN, ATCommandType.Read, null);
@@ -397,7 +432,7 @@ namespace BrusDev.IO.Modems
             return responseFrame.OutParameters;
         }
 
-        public override string GetSignalQualityReport()
+        public string GetSignalQualityReport()
         {
             ATFrame responseFrame;
             ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CSQ, ATCommandType.Execution, null);
@@ -410,7 +445,7 @@ namespace BrusDev.IO.Modems
             return responseFrame.OutParameters;
         }
 
-        public override string GetGsmNetworkRegistration()
+        public string GetGsmNetworkRegistration()
         {
             ATFrame responseFrame;
             ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CREG, ATCommandType.Read, null);
@@ -423,7 +458,7 @@ namespace BrusDev.IO.Modems
             return responseFrame.OutParameters;
         }
 
-        public override string GetGprsNetworkRegistration()
+        public string GetGprsNetworkRegistration()
         {
             ATFrame responseFrame;
             ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CGREG, ATCommandType.Read, null);
@@ -436,7 +471,7 @@ namespace BrusDev.IO.Modems
             return responseFrame.OutParameters;
         }
 
-        public override string GetGPRSServiceState()
+        public string GetGPRSServiceState()
         {
             ATFrame responseFrame;
             ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CGATT, ATCommandType.Read, null);
@@ -449,7 +484,7 @@ namespace BrusDev.IO.Modems
             return responseFrame.OutParameters;
         }
 
-        public override string GetImei()
+        public override string GetSerial()
         {
             ATFrame responseFrame;
             ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_GSN, ATCommandType.Execution, null);
@@ -462,10 +497,10 @@ namespace BrusDev.IO.Modems
             return responseFrame.OutParameters;
         }
 
-        public override string GetConnectionStatus()
+        public override string GetIPConnectionStatus(int id)
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPSTATUS, ATCommandType.Execution, null);
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPSTATUS, ATCommandType.Write, id.ToString());
 
             responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 
@@ -473,6 +508,29 @@ namespace BrusDev.IO.Modems
                 throw new ATModemException(ATModemError.Generic);
 
             return responseFrame.OutParameters;
+        }
+
+
+        public override void StartListening(int port)
+        {
+            ATFrame responseFrame;
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPSERVER, ATCommandType.Write, String.Concat("1", port));
+
+            responseFrame = (ATFrame)this.protocol.Process(requestFrame);
+
+            if (responseFrame.Result != "OK")
+                throw new ATModemException(ATModemError.Generic);
+        }
+
+        public override void StopListening()
+        {
+            ATFrame responseFrame;
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPSERVER, ATCommandType.Write, "0");
+
+            responseFrame = (ATFrame)this.protocol.Process(requestFrame);
+
+            if (responseFrame.Result != "OK")
+                throw new ATModemException(ATModemError.Generic);
         }
 
         protected override void Dispose(bool disposing)
