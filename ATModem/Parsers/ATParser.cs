@@ -12,9 +12,14 @@ namespace BrusDev.IO.Modems.Parsers
 
         public abstract int IndexOfDelimitor(byte[] buffer, int index, int count, bool ignoreTruncated);
 
+        public abstract int LengthOfDelimitor();
+
         public static int CompareSequence(byte[] sourceArray, int sourceIndex, int sourceLength, byte[] sequenceArray, int sequenceIndex, int sequenceLength)
         {
             int compareIndex = 0;
+
+            if (sourceLength != sequenceLength)
+                return sourceLength - sequenceLength;
 
             while (compareIndex < sequenceLength && sourceArray[sourceIndex + compareIndex] ==
                 sequenceArray[sequenceIndex + compareIndex])

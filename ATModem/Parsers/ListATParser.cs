@@ -11,6 +11,7 @@ namespace BrusDev.IO.Modems.Parsers
         private Hashtable frameParsers;
         private ArrayList unsolicitedFrameParsers;
         private byte[] delimitorSequence;
+        private int delimitorSequenceLength;
 
         protected Regex simpleResponseRegex;
 
@@ -21,6 +22,7 @@ namespace BrusDev.IO.Modems.Parsers
             this.frameParsers = new Hashtable();
             this.unsolicitedFrameParsers = new ArrayList();
             this.delimitorSequence = delimitorSequence;
+            this.delimitorSequenceLength = this.delimitorSequence.Length;
         }
 
         public override ATParserResult ParseResponse(string command, ATCommandType commandType, byte[] buffer, int index, int count)
@@ -82,6 +84,11 @@ namespace BrusDev.IO.Modems.Parsers
         protected void AddUnsolicitedFrameParser(ATFrameParser frameParser)
         {
             this.unsolicitedFrameParsers.Add(frameParser);
+        }
+
+        public override int LengthOfDelimitor()
+        {
+            return this.delimitorSequenceLength;
         }
     }
 }

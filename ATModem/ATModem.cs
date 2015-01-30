@@ -7,6 +7,7 @@ using System;
 using System.Collections;
 using System.Text;
 using System.Threading;
+using System.IO;
 
 namespace BrusDev.IO.Modems
 {
@@ -44,7 +45,7 @@ namespace BrusDev.IO.Modems
         private long ipConnectionId;
         private long ipConnectionDataCount;
         private long ipConnectionDataLength;
-        private ATFrame ipConnectionDataFrame;
+        private Stream ipConnectionDataStream;
         private object ipConnectionSyncRoot;
 
         private ATConnectionState[] ipConnectionState;
@@ -62,7 +63,7 @@ namespace BrusDev.IO.Modems
             this.ipConnectionId = -1;
             this.ipConnectionDataCount = 0;
             this.ipConnectionDataLength = 0;
-            this.ipConnectionDataFrame = null;
+            this.ipConnectionDataStream = null;
             this.ipConnectionSyncRoot = new object();
             this.ipConnectionState = new ATConnectionState[maximumConnections];
             for (int i = 0; i < maximumConnections; i++)
@@ -75,6 +76,16 @@ namespace BrusDev.IO.Modems
         protected virtual void Initialize()
         {
             bool deviceEnabled = false;
+
+            //Resetto il dispositivo.
+            try
+            {
+                this.Reset();
+            }
+            catch
+            {
+                Thread.Sleep(1000);
+            }
 
             //Attendo l'abilitazione del dispositivo.
             for (int count = 0; count < maximumEnableTests; count++)
@@ -96,6 +107,8 @@ namespace BrusDev.IO.Modems
         }
 
         public abstract void Test();
+
+        public abstract void Reset();
 
         public abstract void Close();
 
@@ -179,7 +192,7 @@ namespace BrusDev.IO.Modems
                     return 0;
                 }
 
-                count = ipConnectionDataFrame.DataStream.Read(buffer, index, count);
+                count = ipConnectionDataStream.Read(buffer, index, count);
 
                 //Verifico se sono andati persi dei dati della frame.
                 if (count == 0 && this.ipConnectionDataCount < this.ipConnectionDataLength)
@@ -225,9 +238,10 @@ namespace BrusDev.IO.Modems
 
                 if (connectionState.ipConnectionOpened && !connectionState.ipConnectionDataDiscarded)
                 {
+                    this.ipConnectionId = id;
                     this.ipConnectionDataCount = 0;
                     this.ipConnectionDataLength = frame.DataStream.Length;
-                    this.ipConnectionDataFrame = frame;
+                    this.ipConnectionDataStream = frame.DataStream;
 
                     connectionState.ipConnectionDataReady.Set();
                 }
@@ -236,36 +250,40 @@ namespace BrusDev.IO.Modems
 
         protected void OnIPConnectionOpened(int id, bool remote)
         {
-            ATConnectionState connectionState = this.ipConnectionState[id];
-
-
             lock (this.ipConnectionSyncRoot)
             {
-                connectionState.ipConnectionOpened = true;
-                connectionState.ipConnectionPending = true;
-                connectionState.ipConnectionDataDiscarded = false;
-                connectionState.ipConnectionMode = ATConnectionMode.Client;
-                connectionState.ipConnectionDataReady.Reset();
+                ATConnectionState connectionState = this.ipConnectionState[id];
 
-                if (remote)
+                if (!connectionState.ipConnectionOpened)
                 {
-                    connectionState.ipConnectionMode = ATConnectionMode.Server;
+                    connectionState.ipConnectionOpened = true;
+                    connectionState.ipConnectionPending = true;
+                    connectionState.ipConnectionDataDiscarded = false;
+                    connectionState.ipConnectionMode = ATConnectionMode.Client;
+                    connectionState.ipConnectionDataReady.Reset();
 
-                    this.ipConnectionServerCount++;
-                    this.ipConnectionServerReady.Set();
+                    if (remote)
+                    {
+                        connectionState.ipConnectionMode = ATConnectionMode.Server;
+
+                        this.ipConnectionServerCount++;
+                        this.ipConnectionServerReady.Set();
+                    }
                 }
             }
         }
 
         protected void OnIPConnectionClosed(int id)
         {
-            ATConnectionState connectionState = this.ipConnectionState[id];
-
-
             lock (this.ipConnectionSyncRoot)
             {
-                connectionState.ipConnectionOpened = false;
-                connectionState.ipConnectionDataReady.Set();
+                ATConnectionState connectionState = this.ipConnectionState[id];
+
+                if (connectionState.ipConnectionOpened)
+                {
+                    connectionState.ipConnectionOpened = false;
+                    connectionState.ipConnectionDataReady.Set();
+                }
             }
         }
 

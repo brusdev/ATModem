@@ -138,6 +138,11 @@ namespace BrusDev.IO.Modems
                 throw new ATModemException(ATModemError.Generic);
         }
 
+        public override void Reset()
+        {
+            //Todo...
+        }
+
         public override void Close()
         {
             this.protocol.Close();
@@ -300,7 +305,7 @@ namespace BrusDev.IO.Modems
                 if (!this.connectionEvent.WaitOne(timeout, true))
                     throw new ATModemException(ATModemError.Timeout);
 
-                this.OnIPConnectionOpened(0, false);
+                this.OnIPConnectionOpened(this.openingConnectionId, false);
             }
 
             return 0;
@@ -514,7 +519,7 @@ namespace BrusDev.IO.Modems
         public override void StartListening(int port)
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPSERVER, ATCommandType.Write, String.Concat("1", port));
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPSERVER, ATCommandType.Write, String.Concat("1,", port));
 
             responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 

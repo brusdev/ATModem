@@ -192,7 +192,7 @@ namespace BrusDev.Text.RegularExpressions
             groupList.Add(group);
 
             //Check if searchList is byte list.
-            //if (searchList[searchIndex] is byte)
+            if (searchList[searchIndex] is byte)
                 searchList = new CharByteList(searchList);
 
             searchLength += searchIndex;

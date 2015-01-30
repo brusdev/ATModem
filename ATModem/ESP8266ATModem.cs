@@ -20,8 +20,12 @@ namespace BrusDev.IO.Modems
         private int openingConnectionId;
         private int sendingConnectionId;
         private int closingConnectionId;
+        private int checkingConnectionId;
+        private string checkingConnectionStatus;
         private ManualResetEvent connectionEvent;
         private object connectionSyncRoot;
+        private bool[] connectionStatus;
+        private bool[] previousConnectionStatus;
 
         private string sendResult;
         private ManualResetEvent sendEvent;
@@ -42,6 +46,12 @@ namespace BrusDev.IO.Modems
             this.sendPromptEvent = new ManualResetEvent(false);
 
             this.connectionSyncRoot = new object();
+            this.connectionStatus = new bool[4];
+            for (int i = 0; i < this.connectionStatus.Length; i++)
+                this.connectionStatus[i] = false;
+            this.previousConnectionStatus = new bool[4];
+            for (int i = 0; i < this.previousConnectionStatus.Length; i++)
+                this.previousConnectionStatus[i] = this.connectionStatus[i];
 
             this.Initialize();
         }
@@ -59,13 +69,6 @@ namespace BrusDev.IO.Modems
                 this.sendResult = responseFrame.Result;
                 this.sendEvent.Set();
             }
-            else if (responseFrame.Command == ATCommand.CLOSED)
-            {
-                lock (connectionSyncRoot)
-                {
-                    this.OnIPConnectionClosed(0);
-                }
-            }
             else if (responseFrame.Command == ATCommand.SEND_PROMPT)
             {
                 this.sendPromptEvent.Set();
@@ -76,10 +79,68 @@ namespace BrusDev.IO.Modems
             }
             else if (responseFrame.Command == ATCommand.REMOTE_IP)
             {
-                this.OnIPConnectionOpened(Convert.ToInt32(responseFrame.OutParameters), true);
+                for (int i = 0; i < this.previousConnectionStatus.Length; i++)
+                {
+                    this.previousConnectionStatus[i] = this.connectionStatus[i];
+                    this.connectionStatus[i] = false;
+                }
+
+                this.protocol.BeginProcess(this.protocol.CreateRequestFrame(
+                    ATCommand.AT_CIPSTATUS, ATCommandType.Execution, null),
+                    true, 300000, this.UpdateIpConnectionStatus, null);
+            }
+            else if (responseFrame.Command == ATCommand.CLOSED)
+            {
+                for (int i = 0; i < this.previousConnectionStatus.Length; i++)
+                {
+                    this.previousConnectionStatus[i] = this.connectionStatus[i];
+                    this.connectionStatus[i] = false;
+                }
+
+                this.protocol.BeginProcess(this.protocol.CreateRequestFrame(
+                    ATCommand.AT_CIPSTATUS, ATCommandType.Execution, null),
+                    true, 300000, this.UpdateIpConnectionStatus, null);
+            }
+            else if (responseFrame.Command == ATCommand.AT_CIPSTATUS)
+            {
+                if (responseFrame.CommandType == ATCommandType.Execution)
+                {
+
+                }
+                else if (responseFrame.CommandType == ATCommandType.Write)
+                {
+                    int connectionId = Convert.ToInt32(responseFrame.OutParameters);
+
+                    if (this.checkingConnectionId == connectionId)
+                    {
+                        this.checkingConnectionStatus = responseFrame.Result;
+                    }
+
+                    this.connectionStatus[connectionId] = true;
+                }
             }
         }
 
+        private void UpdateIpConnectionStatus(IAsyncResult asyncResult)
+        {
+            lock (connectionSyncRoot)
+            {
+                for (int i = 0; i < this.previousConnectionStatus.Length; i++)
+                {
+                    if (this.connectionStatus[i] != this.previousConnectionStatus[i])
+                    {
+                        if (this.connectionStatus[i])
+                        {
+                            this.OnIPConnectionOpened(i, true);
+                        }
+                        else
+                        {
+                            this.OnIPConnectionClosed(i);
+                        }
+                    }
+                }
+            }
+        }
 
         protected override void Initialize()
         {
@@ -188,7 +249,7 @@ namespace BrusDev.IO.Modems
 
                 requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPSTART, ATCommandType.Write,
                     String.Concat(this.openingConnectionId, ",\"", mode, "\",\"", ipAddress, "\",", port.ToString()));
-                responseFrame = (ATFrame)this.protocol.Process(requestFrame);
+                responseFrame = (ATFrame)this.protocol.Process(requestFrame, true, 6000);
 
                 if (responseFrame.Result != "OK")
                     throw new ATModemException(ATModemError.Generic);
@@ -196,10 +257,12 @@ namespace BrusDev.IO.Modems
                 if (!this.connectionEvent.WaitOne(timeout, true))
                     throw new ATModemException(ATModemError.Timeout);
 
-                this.OnIPConnectionOpened(0, false);
+                this.connectionStatus[this.openingConnectionId] = true;
+
+                this.OnIPConnectionOpened(this.openingConnectionId, false);
             }
 
-            return 0;
+            return this.openingConnectionId;
         }
 
         public override void SendData(int id, byte[] buffer, int index, int count, int timeout)
@@ -220,8 +283,6 @@ namespace BrusDev.IO.Modems
                 this.protocol.Process(requestFrame);
 
                 requestFrame.DataStream.Write(buffer, index, count);
-
-                //requestFrame.DataStream.Write(new byte[] { 0x1A }, 0, 1);
 
                 if (!this.sendEvent.WaitOne(timeout, true))
                     throw new ATModemException(ATModemError.Timeout);
@@ -251,9 +312,11 @@ namespace BrusDev.IO.Modems
                 }
                 catch (ATModemException)
                 {
-                    if (this.GetIPConnectionStatus(id) != "4")
+                    if (this.GetIPConnectionStatus(id) != null)
                         throw new ATModemException(ATModemError.Generic);
                 }
+
+                this.connectionStatus[id] = false;
 
                 this.OnIPConnectionClosed(id);
             }
@@ -272,6 +335,16 @@ namespace BrusDev.IO.Modems
 
         public override string GetIPConnectionStatus(int id)
         {
+            this.checkingConnectionId = id;
+            this.checkingConnectionStatus = null;
+
+            this.GetIPConnectionStatus();
+
+            return this.checkingConnectionStatus;
+        }
+
+        private string GetIPConnectionStatus()
+        {
             ATFrame responseFrame;
             ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPSTATUS, ATCommandType.Execution, null);
 
@@ -287,7 +360,7 @@ namespace BrusDev.IO.Modems
         public override void StartListening(int port)
         {
             ATFrame responseFrame;
-            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPSERVER, ATCommandType.Write, String.Concat("1", port));
+            ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_CIPSERVER, ATCommandType.Write, String.Concat("1,", port));
 
             responseFrame = (ATFrame)this.protocol.Process(requestFrame);
 
@@ -321,7 +394,7 @@ namespace BrusDev.IO.Modems
 
 
         /***ESP8266***/
-        public void Reset()
+        public override void Reset()
         {
             ATFrame responseFrame;
             ATFrame requestFrame = this.protocol.CreateRequestFrame(ATCommand.AT_RST, ATCommandType.Execution, null);
